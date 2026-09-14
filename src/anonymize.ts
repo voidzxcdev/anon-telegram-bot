@@ -3,6 +3,8 @@ import type { Message, ReplyParameters } from "grammy/types";
 
 import { parseAnonCommand } from "./command.js";
 import { captureStyleFromAnonMessage } from "./style/capture.js";
+import { handleGoshaMention, mentionsGosha } from "./style/gosha.js";
+import type { TwinLearners } from "./style/learners.js";
 
 function replyParameters(
   messageId: number | undefined,
@@ -133,7 +135,10 @@ export async function sendAnonymousCopy(
   throw new Error("Nothing to send: empty payload and no supported media");
 }
 
-export async function handleAnonymize(ctx: Context): Promise<void> {
+export async function handleAnonymize(
+  ctx: Context,
+  twins?: TwinLearners,
+): Promise<void> {
   const message = ctx.message;
   if (!message) {
     return;
@@ -159,10 +164,10 @@ export async function handleAnonymize(ctx: Context): Promise<void> {
   if (!parsed.payload && !hasMedia) {
     await ctx.reply(
       "Usage:\n" +
-        "• /m your text\n" +
-        "• /с ваш текст\n" +
-        "• Attach a photo/file and put /m or /с in the caption\n" +
-        "• Reply to a message, then /m or /с to answer anonymously",
+        "- /m your text\n" +
+        "- /с ваш текст\n" +
+        "- Attach a photo/file and put /m or /с in the caption\n" +
+        "- Reply to a message, then /m or /с to answer anonymously",
     );
     return;
   }
@@ -186,5 +191,12 @@ export async function handleAnonymize(ctx: Context): Promise<void> {
   } catch (error) {
     // Needs "Delete messages" in groups; private chats often block deleting user msgs.
     console.warn("could not delete original message", error);
+  }
+
+  // /m or /с containing Гоша -> AI replies after the anon send
+  if (twins && (mentionsGosha(parsed.payload) || mentionsGosha(raw))) {
+    const speaker =
+      (message.message_id ?? 0) % 2 === 0 ? twins.alpha : twins.beta;
+    await handleGoshaMention(ctx, speaker, parsed.payload || raw || "");
   }
 }

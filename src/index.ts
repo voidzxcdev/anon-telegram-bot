@@ -28,7 +28,9 @@ async function main(): Promise<void> {
   );
 
   if (llm) {
-    console.log(`OpenCode Zen trainer: model=${llm.model}`);
+    console.log(
+      `OpenCode Zen trainer with fallbacks: ${llm.model} (+ chain)`,
+    );
     const runTrain = async (reason: string) => {
       try {
         // Either twin can trigger; both read the same resulting profile.
@@ -57,7 +59,10 @@ async function main(): Promise<void> {
     );
   }
 
-  const bot = createBot(env.TELEGRAM_BOT_TOKEN);
+  const bot = createBot(
+    env.TELEGRAM_BOT_TOKEN,
+    llm ? { twins } : {},
+  );
 
   // Bring HTTP up first so Render health checks pass while Telegram is configured.
   if (env.publicBaseUrl) {

@@ -39,6 +39,7 @@ export async function distillSharedStyleProfile(
     "You are building a writing-style card for two chatbots that must sound like the same person.\n" +
     "Analyze ONLY tone, slang, emoji habits, sentence length, bilingual RU/EN mix, humor, and reply habits.\n" +
     "Do NOT copy private facts, names, addresses, phone numbers, or secrets into the card.\n" +
+    'Never use em-dashes or en-dashes in the card - use plain hyphen "-" only.\n' +
     "Return a compact style card in plain text (bullet rules), max ~400 words.\n\n" +
     `Samples (${samples.length} in 30-day window, showing up to ${MAX_SAMPLES_FOR_TRAIN}):\n` +
     formatSamples(samples);
@@ -47,7 +48,7 @@ export async function distillSharedStyleProfile(
     {
       role: "system",
       content:
-        "Extract speaking style only. Refuse to store or repeat sensitive personal data.",
+        'Extract speaking style only. Refuse to store or repeat sensitive personal data. Use "-" not em-dashes.',
     },
     { role: "user", content: prompt },
   ]);

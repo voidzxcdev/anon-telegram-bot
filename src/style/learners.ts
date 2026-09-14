@@ -1,4 +1,5 @@
-import type { OpenCodeClient } from "../llm/opencode.js";
+import { DASH_RULE, type OpenCodeClient } from "../llm/opencode.js";
+import { goshaSystemRules } from "./gosha.js";
 import {
   getSharedStyleStore,
   type StyleProfile,
@@ -50,25 +51,43 @@ export class PersonaBot {
     return profile;
   }
 
-  /** Generate a line in the learned voice (for future A↔B chat). */
+  /** Generate a line in the learned voice (for A↔B chat or Гоша mentions). */
   async speak(topic: string): Promise<string> {
     if (!this.llm) {
       throw new Error("OPENCODE_API_KEY required");
     }
-    const profile =
-      this.cachedProfile ?? (await this.loadSharedProfile());
+    const profile = this.cachedProfile ?? (await this.loadSharedProfile());
     const card =
       profile?.card ??
-      "No style card yet — mimic casual bilingual chat briefly.";
+      "No style card yet - mimic casual bilingual chat briefly.";
 
     return this.llm.complete([
       {
         role: "system",
         content:
           `You are persona bot "${this.id}". Speak ONLY in the user's learned style.\n` +
+          `${DASH_RULE}\n` +
           `Shared style card:\n${card}`,
       },
       { role: "user", content: topic },
+    ]);
+  }
+
+  async speakAsGosha(userMessage: string, styleCard: string): Promise<string> {
+    if (!this.llm) {
+      throw new Error("OPENCODE_API_KEY required");
+    }
+    return this.llm.complete([
+      {
+        role: "system",
+        content: goshaSystemRules(styleCard, this.id),
+      },
+      {
+        role: "user",
+        content:
+          "The user mentioned Гоша in this message. Reply as the AI persona.\n\n" +
+          userMessage,
+      },
     ]);
   }
 }
