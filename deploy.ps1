@@ -31,8 +31,15 @@ param(
 $ErrorActionPreference = "Stop"
 
 function New-RandomSecret {
+  # Compatible with Windows PowerShell 5.1 (.NET Framework) and PowerShell 7+
   $bytes = New-Object byte[] 32
-  [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+  $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+  try {
+    $rng.GetBytes($bytes)
+  }
+  finally {
+    $rng.Dispose()
+  }
   return -join ($bytes | ForEach-Object { $_.ToString("x2") })
 }
 
