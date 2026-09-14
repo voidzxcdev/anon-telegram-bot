@@ -9,10 +9,8 @@ const TRAIN_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
 async function main(): Promise<void> {
   const env = loadEnv();
 
-  const llm = createLlmClient({
-    ...(env.GEMINI_API_KEY ? { geminiApiKey: env.GEMINI_API_KEY } : {}),
-    ...(env.GROQ_API_KEY ? { groqApiKey: env.GROQ_API_KEY } : {}),
-  });
+  // Keyless Pollinations LLM - no API keys.
+  const llm = createLlmClient();
 
   // Both persona bots share one StyleStore — /m or /с on this Telegram bot trains both.
   const twins = createTwinLearners(llm);
@@ -25,38 +23,29 @@ async function main(): Promise<void> {
     `style corpus: ${sampleCount} samples (30d); profile=${Boolean(twins.alpha.getProfile())}`,
   );
 
-  if (llm) {
-    console.log(`LLM ready: ${llm.model} (Gemini + Groq fallbacks)`);
-    const runTrain = async (reason: string) => {
-      try {
-        const profile = await twins.alpha.learnFromSharedCorpus();
-        if (profile) {
-          await twins.beta.loadSharedProfile();
-          console.log(
-            `style distilled (${reason}): samples=${profile.sampleCount} at ${profile.updatedAt}`,
-          );
-        } else {
-          console.log(`style train skipped (${reason}): no /m or /с samples yet`);
-        }
-      } catch (error) {
-        console.warn(`style train failed (${reason})`, error);
+  console.log(`LLM ready: ${llm.model} (Pollinations, keyless)`);
+  const runTrain = async (reason: string) => {
+    try {
+      const profile = await twins.alpha.learnFromSharedCorpus();
+      if (profile) {
+        await twins.beta.loadSharedProfile();
+        console.log(
+          `style distilled (${reason}): samples=${profile.sampleCount} at ${profile.updatedAt}`,
+        );
+      } else {
+        console.log(`style train skipped (${reason}): no /m or /с samples yet`);
       }
-    };
+    } catch (error) {
+      console.warn(`style train failed (${reason})`, error);
+    }
+  };
 
-    void runTrain("startup");
-    setInterval(() => {
-      void runTrain("interval");
-    }, TRAIN_INTERVAL_MS);
-  } else {
-    console.warn(
-      "No GEMINI_API_KEY / GROQ_API_KEY — still recording /m+/с; Гоша replies disabled",
-    );
-  }
+  void runTrain("startup");
+  setInterval(() => {
+    void runTrain("interval");
+  }, TRAIN_INTERVAL_MS);
 
-  const bot = createBot(
-    env.TELEGRAM_BOT_TOKEN,
-    llm ? { twins } : {},
-  );
+  const bot = createBot(env.TELEGRAM_BOT_TOKEN, { twins });
 
   if (env.publicBaseUrl) {
     startWebhookServer(bot, env);

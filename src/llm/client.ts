@@ -8,69 +8,45 @@ import {
   type LlmClient,
 } from "./types.js";
 
-export type LlmProviderConfig = {
-  geminiApiKey?: string;
-  groqApiKey?: string;
-};
+/** Anonymous OpenAI-compatible endpoint - no API key required. */
+const POLLINATIONS_BASE = "https://text.pollinations.ai/openai";
 
-type ModelTarget = {
-  id: string;
-  label: string;
-  client: OpenAI;
+/**
+ * Anonymous-tier aliases for the same GPT-OSS 20B backend.
+ * Retries across aliases help when one route is briefly rate-limited.
+ */
+const MODEL_IDS = ["openai-fast", "openai", "gpt-oss"] as const;
+
+export type LlmProviderConfig = {
+  /** Override Pollinations base URL (tests / self-host). */
+  baseURL?: string;
+  /** Override model id list. */
+  models?: readonly string[];
 };
 
 /**
- * Better free/fast models outside OpenCode:
- * Gemini 2.5/2.0 Flash (Google AI Studio) + Llama on Groq.
+ * Keyless LLM via Pollinations anonymous tier (OpenAI chat completions shape).
  */
-export function createLlmClient(config: LlmProviderConfig): LlmClient | undefined {
-  const targets: ModelTarget[] = [];
+export function createLlmClient(config: LlmProviderConfig = {}): LlmClient {
+  const baseURL = config.baseURL ?? POLLINATIONS_BASE;
+  const models = config.models ?? MODEL_IDS;
 
-  if (config.geminiApiKey) {
-    const gemini = new OpenAI({
-      apiKey: config.geminiApiKey,
-      baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
-    });
-    targets.push(
-      { id: "gemini-2.5-flash", label: "gemini-2.5-flash", client: gemini },
-      { id: "gemini-2.0-flash", label: "gemini-2.0-flash", client: gemini },
-    );
-  }
+  const client = new OpenAI({
+    apiKey: "anonymous",
+    baseURL,
+  });
 
-  if (config.groqApiKey) {
-    const groq = new OpenAI({
-      apiKey: config.groqApiKey,
-      baseURL: "https://api.groq.com/openai/v1",
-    });
-    targets.push(
-      {
-        id: "llama-3.3-70b-versatile",
-        label: "groq/llama-3.3-70b",
-        client: groq,
-      },
-      {
-        id: "llama-3.1-8b-instant",
-        label: "groq/llama-3.1-8b",
-        client: groq,
-      },
-    );
-  }
+  let lastModel = models[0] ?? "openai-fast";
 
-  if (targets.length === 0) {
-    return undefined;
-  }
-
-  let lastModel = targets[0]!.label;
-
-  async function completeWith(target: ModelTarget, messages: ChatMessage[]): Promise<string> {
-    const chat = await target.client.chat.completions.create({
-      model: target.id,
+  async function completeWith(model: string, messages: ChatMessage[]): Promise<string> {
+    const chat = await client.chat.completions.create({
+      model,
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
     });
     const content = chat.choices[0]?.message?.content;
     const text = typeof content === "string" ? content.trim() : "";
     if (!text) {
-      throw new Error(`${target.label} returned empty completion`);
+      throw new Error(`${model} returned empty completion`);
     }
     return normalizeDashes(text);
   }
@@ -82,27 +58,27 @@ export function createLlmClient(config: LlmProviderConfig): LlmClient | undefine
     async complete(messages: ChatMessage[]): Promise<string> {
       const errors: string[] = [];
 
-      for (const target of targets) {
+      for (const model of models) {
         try {
-          const text = await completeWith(target, messages);
-          lastModel = target.label;
-          if (target !== targets[0]) {
-            console.warn(`LLM fallback succeeded with ${target.label}`);
+          const text = await completeWith(model, messages);
+          lastModel = model;
+          if (model !== models[0]) {
+            console.warn(`LLM fallback succeeded with ${model}`);
           }
           return text;
         } catch (error) {
           const detail =
             error instanceof Error ? error.message : String(error);
-          errors.push(`${target.label}: ${detail}`);
-          console.warn(`LLM failed (${target.label}):`, detail);
+          errors.push(`${model}: ${detail}`);
+          console.warn(`LLM failed (${model}):`, detail);
           if (isRateLimitError(error)) {
-            await sleep(300);
+            await sleep(400);
           }
         }
       }
 
       throw new Error(
-        `All LLM providers failed. Tried: ${targets.map((t) => t.label).join(", ")}.`,
+        `All Pollinations models failed. Tried: ${models.join(", ")}. ${errors.join(" | ")}`,
       );
     },
   };

@@ -13,10 +13,6 @@ const envSchema = z.object({
     .default("change-me-in-production-please"),
   /** Use long polling locally when no public URL is available. */
   NODE_ENV: z.enum(["development", "production", "test"]).default("production"),
-  /** Google AI Studio key - https://aistudio.google.com/apikey */
-  GEMINI_API_KEY: z.string().min(1).optional(),
-  /** Groq Cloud key - https://console.groq.com/keys */
-  GROQ_API_KEY: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof envSchema> & {
