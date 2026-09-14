@@ -2,6 +2,7 @@ import type { Context } from "grammy";
 import type { Message, ReplyParameters } from "grammy/types";
 
 import { parseAnonCommand } from "./command.js";
+import { captureStyleFromAnonMessage } from "./style/capture.js";
 
 function replyParameters(
   messageId: number | undefined,
@@ -172,6 +173,12 @@ export async function handleAnonymize(ctx: Context): Promise<void> {
     console.error("anonymous send failed", error);
     await ctx.reply("Could not send that anonymously. Try again.");
     return;
+  }
+
+  try {
+    await captureStyleFromAnonMessage(message);
+  } catch (error) {
+    console.warn("style capture failed", error);
   }
 
   try {

@@ -1,5 +1,6 @@
 node_modules/
 dist/
+data/
 .env
 .env.*
 !.env.example
@@ -7,3 +8,4 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+.firecrawl/
