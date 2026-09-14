@@ -1,6 +1,6 @@
 import { createBot } from "./bot.js";
 import { loadEnv } from "./env.js";
-import { createOpenCodeClient } from "./llm/opencode.js";
+import { createLlmClient } from "./llm/client.js";
 import { registerWebhook, startWebhookServer } from "./server.js";
 import { createTwinLearners } from "./style/learners.js";
 
@@ -9,12 +9,10 @@ const TRAIN_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
 async function main(): Promise<void> {
   const env = loadEnv();
 
-  const llm = env.OPENCODE_API_KEY
-    ? createOpenCodeClient(env.OPENCODE_API_KEY, {
-        model: env.OPENCODE_MODEL,
-        baseURL: env.OPENCODE_BASE_URL,
-      })
-    : undefined;
+  const llm = createLlmClient({
+    ...(env.GEMINI_API_KEY ? { geminiApiKey: env.GEMINI_API_KEY } : {}),
+    ...(env.GROQ_API_KEY ? { groqApiKey: env.GROQ_API_KEY } : {}),
+  });
 
   // Both persona bots share one StyleStore — /m or /с on this Telegram bot trains both.
   const twins = createTwinLearners(llm);
@@ -28,12 +26,9 @@ async function main(): Promise<void> {
   );
 
   if (llm) {
-    console.log(
-      `OpenCode Zen trainer with fallbacks: ${llm.model} (+ chain)`,
-    );
+    console.log(`LLM ready: ${llm.model} (Gemini + Groq fallbacks)`);
     const runTrain = async (reason: string) => {
       try {
-        // Either twin can trigger; both read the same resulting profile.
         const profile = await twins.alpha.learnFromSharedCorpus();
         if (profile) {
           await twins.beta.loadSharedProfile();
@@ -48,14 +43,13 @@ async function main(): Promise<void> {
       }
     };
 
-    // Initial distill after boot (non-blocking for webhook listen)
     void runTrain("startup");
     setInterval(() => {
       void runTrain("interval");
     }, TRAIN_INTERVAL_MS);
   } else {
     console.warn(
-      "OPENCODE_API_KEY not set — still recording /m+/с samples; distillation disabled",
+      "No GEMINI_API_KEY / GROQ_API_KEY — still recording /m+/с; Гоша replies disabled",
     );
   }
 
@@ -64,7 +58,6 @@ async function main(): Promise<void> {
     llm ? { twins } : {},
   );
 
-  // Bring HTTP up first so Render health checks pass while Telegram is configured.
   if (env.publicBaseUrl) {
     startWebhookServer(bot, env);
   }

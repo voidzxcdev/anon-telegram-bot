@@ -1,4 +1,4 @@
-import type { OpenCodeClient } from "../llm/opencode.js";
+import type { LlmClient } from "../llm/types.js";
 import {
   getSharedStyleStore,
   type StyleProfile,
@@ -26,7 +26,7 @@ function formatSamples(samples: StyleSample[]): string {
  * Both persona bots read this same profile.
  */
 export async function distillSharedStyleProfile(
-  llm: OpenCodeClient,
+  llm: LlmClient,
   store: StyleStore = getSharedStyleStore(),
 ): Promise<StyleProfile | undefined> {
   await store.prune();

@@ -4,6 +4,7 @@ import type { Message, ReplyParameters } from "grammy/types";
 import { parseAnonCommand } from "./command.js";
 import { captureStyleFromAnonMessage } from "./style/capture.js";
 import { handleGoshaMention, mentionsGosha } from "./style/gosha.js";
+import { runGoshaInBackground } from "./style/gosha-lock.js";
 import type { TwinLearners } from "./style/learners.js";
 
 function replyParameters(
@@ -193,10 +194,13 @@ export async function handleAnonymize(
     console.warn("could not delete original message", error);
   }
 
-  // /m or /с containing Гоша -> AI replies after the anon send
+  // /m or /с containing Гоша -> one AI reply (background; no webhook spam)
   if (twins && (mentionsGosha(parsed.payload) || mentionsGosha(raw))) {
     const speaker =
-      (message.message_id ?? 0) % 2 === 0 ? twins.alpha : twins.beta;
-    await handleGoshaMention(ctx, speaker, parsed.payload || raw || "");
+      message.message_id % 2 === 0 ? twins.alpha : twins.beta;
+    const text = parsed.payload || raw || "";
+    runGoshaInBackground(message.chat.id, message.message_id, async () => {
+      await handleGoshaMention(ctx, speaker, text);
+    });
   }
 }

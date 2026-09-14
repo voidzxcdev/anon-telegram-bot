@@ -1,6 +1,6 @@
 import type { Context } from "grammy";
 
-import { DASH_RULE } from "../llm/opencode.js";
+import { DASH_RULE } from "../llm/types.js";
 import type { PersonaBot } from "./learners.js";
 
 const GOSHA_RE = /гоша/i;
@@ -16,7 +16,7 @@ function truncate(text: string): string {
 }
 
 /**
- * When a message contains "Гоша", reply in the shared learned style.
+ * When a message contains "Гоша", reply once in the shared learned style.
  */
 export async function handleGoshaMention(
   ctx: Context,
@@ -45,7 +45,7 @@ export async function handleGoshaMention(
   } catch (error) {
     console.error("Гоша reply failed", error);
     const detail =
-      error instanceof Error ? error.message.slice(0, 280) : "error";
+      error instanceof Error ? error.message.slice(0, 220) : "error";
     try {
       await ctx.api.editMessageText(
         status.chat.id,
@@ -63,7 +63,7 @@ export function goshaSystemRules(styleCard: string, personaId: string): string {
     `You are "${personaId}", answering when someone mentions Гоша.\n` +
     "Speak in the user's learned style from the shared style card.\n" +
     `${DASH_RULE}\n` +
-    "Keep replies natural and not too long.\n" +
+    "Keep replies natural and not too long. One reply only.\n" +
     `Style card:\n${styleCard}`
   );
 }

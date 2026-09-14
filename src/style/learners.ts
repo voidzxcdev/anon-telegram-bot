@@ -1,4 +1,5 @@
-import { DASH_RULE, type OpenCodeClient } from "../llm/opencode.js";
+import type { LlmClient } from "../llm/types.js";
+import { DASH_RULE } from "../llm/types.js";
 import { goshaSystemRules } from "./gosha.js";
 import {
   getSharedStyleStore,
@@ -16,19 +17,18 @@ export type PersonaId = "alpha" | "beta";
 export class PersonaBot {
   readonly id: PersonaId;
   private readonly store: StyleStore;
-  private readonly llm: OpenCodeClient | undefined;
+  private readonly llm: LlmClient | undefined;
   private cachedProfile: StyleProfile | undefined;
 
   constructor(
     id: PersonaId,
-    options: { store?: StyleStore; llm?: OpenCodeClient } = {},
+    options: { store?: StyleStore; llm?: LlmClient } = {},
   ) {
     this.id = id;
     this.store = options.store ?? getSharedStyleStore();
     this.llm = options.llm;
   }
 
-  /** Both bots call this; they read the same shared profile file. */
   async loadSharedProfile(): Promise<StyleProfile | undefined> {
     this.cachedProfile = await this.store.readProfile();
     return this.cachedProfile;
@@ -38,23 +38,18 @@ export class PersonaBot {
     return this.cachedProfile;
   }
 
-  /**
-   * Re-train the shared profile from /m+/с corpus.
-   * Either bot can trigger it; both benefit.
-   */
   async learnFromSharedCorpus(): Promise<StyleProfile | undefined> {
     if (!this.llm) {
-      throw new Error("OPENCODE_API_KEY required to distill style");
+      throw new Error("LLM API key required to distill style");
     }
     const profile = await distillSharedStyleProfile(this.llm, this.store);
     this.cachedProfile = profile;
     return profile;
   }
 
-  /** Generate a line in the learned voice (for A↔B chat or Гоша mentions). */
   async speak(topic: string): Promise<string> {
     if (!this.llm) {
-      throw new Error("OPENCODE_API_KEY required");
+      throw new Error("LLM API key required");
     }
     const profile = this.cachedProfile ?? (await this.loadSharedProfile());
     const card =
@@ -75,7 +70,7 @@ export class PersonaBot {
 
   async speakAsGosha(userMessage: string, styleCard: string): Promise<string> {
     if (!this.llm) {
-      throw new Error("OPENCODE_API_KEY required");
+      throw new Error("LLM API key required");
     }
     return this.llm.complete([
       {
@@ -98,8 +93,7 @@ export type TwinLearners = {
   store: StyleStore;
 };
 
-/** Create both bots bound to the same shared store (one corpus → both learn). */
-export function createTwinLearners(llm?: OpenCodeClient): TwinLearners {
+export function createTwinLearners(llm?: LlmClient): TwinLearners {
   const store = getSharedStyleStore();
   const shared = llm ? { store, llm } : { store };
   return {
