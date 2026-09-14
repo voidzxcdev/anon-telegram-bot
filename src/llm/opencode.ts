@@ -2,12 +2,17 @@ import OpenAI from "openai";
 
 export const OPENCODE_ZEN_BASE_URL = "https://opencode.ai/zen/v1";
 
-/** Primary + fallbacks (OpenCode Zen). */
+/**
+ * Primary + fallbacks (OpenCode Zen free models).
+ * Muse first, then other free Zen models when Muse is rate-limited.
+ */
 export const OPENCODE_MODEL_CHAIN = [
   "muse-spark-1.3-contributor-free",
   "muse-spark-1.2-contributor-free",
-  /** Strong free stealth model on Zen (chat completions). */
   "big-pickle",
+  "mimo-v2.5-free",
+  "nemotron-3.5-lightning-free",
+  "ling-3.0-flash-fin-free",
 ] as const;
 
 export type OpenCodeModelId = (typeof OPENCODE_MODEL_CHAIN)[number] | string;
@@ -26,11 +31,29 @@ export type OpenCodeClient = {
 type ApiKind = "responses" | "chat";
 
 function apiKindForModel(model: string): ApiKind {
-  // Muse Spark free/contributor on Zen use the Responses API.
   if (model.startsWith("muse-spark-")) {
     return "responses";
   }
   return "chat";
+}
+
+function isMuseModel(model: string): boolean {
+  return model.startsWith("muse-spark-");
+}
+
+function isRateLimitError(error: unknown): boolean {
+  if (error && typeof error === "object") {
+    const status = (error as { status?: number }).status;
+    if (status === 429) return true;
+    const code = (error as { code?: string }).code;
+    if (code === "rate_limit_exceeded") return true;
+  }
+  const msg = error instanceof Error ? error.message : String(error);
+  return /\b429\b|rate limit|too many requests/i.test(msg);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Replace em/en dashes with ASCII hyphen. */
@@ -53,8 +76,8 @@ function buildModelChain(preferred?: string): string[] {
 }
 
 /**
- * OpenCode Zen client with automatic model fallback:
- * Muse Spark 1.3 Contributor Free -> Muse Spark 1.2 Contributor Free -> Big Pickle.
+ * OpenCode Zen client with automatic model fallback + 429 skip.
+ * Muse 1.3 -> Muse 1.2 -> Big Pickle -> MiMo -> Nemotron -> Ling
  */
 export function createOpenCodeClient(
   apiKey: string,
@@ -120,8 +143,14 @@ export function createOpenCodeClient(
     },
     async complete(messages: ChatMessage[]): Promise<string> {
       const errors: string[] = [];
+      let skipRemainingMuse = false;
 
       for (const model of chain) {
+        if (skipRemainingMuse && isMuseModel(model)) {
+          errors.push(`${model}: skipped (Muse rate-limited)`);
+          continue;
+        }
+
         try {
           const text = await completeWithModel(model, messages);
           lastModel = model;
@@ -134,11 +163,22 @@ export function createOpenCodeClient(
             error instanceof Error ? error.message : String(error);
           errors.push(`${model}: ${detail}`);
           console.warn(`OpenCode model failed (${model}):`, detail);
+
+          if (isRateLimitError(error) && isMuseModel(model)) {
+            // Muse free tier is hot - jump to other free Zen models.
+            skipRemainingMuse = true;
+            await sleep(400);
+          } else if (isRateLimitError(error)) {
+            // Brief pause before next free model
+            await sleep(600);
+          }
         }
       }
 
       throw new Error(
-        `All OpenCode models failed:\n${errors.map((e) => `- ${e}`).join("\n")}`,
+        `All OpenCode models failed (rate limits or errors). Tried: ${errors
+          .map((e) => e.split(":")[0])
+          .join(", ")}. Wait ~1 min and retry Гоша.`,
       );
     },
   };
