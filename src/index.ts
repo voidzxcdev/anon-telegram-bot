@@ -6,19 +6,46 @@ async function main(): Promise<void> {
   const env = loadEnv();
   const bot = createBot(env.TELEGRAM_BOT_TOKEN);
 
-  await bot.api.setMyCommands([
-    { command: "start", description: "How this bot works" },
-    { command: "help", description: "Usage for /m and /с" },
-    { command: "m", description: "Send an anonymous message" },
-  ]);
-
-  const me = await bot.api.getMe();
-  console.log(`bot @${me.username} ready`);
-
+  // Bring HTTP up first so Render health checks pass while Telegram is configured.
   if (env.publicBaseUrl) {
     startWebhookServer(bot, env);
-    const webhookUrl = await registerWebhook(bot, env);
-    console.log(`webhook set: ${webhookUrl}`);
+  }
+
+  let me;
+  try {
+    me = await bot.api.getMe();
+  } catch (error) {
+    console.error(
+      "TELEGRAM_BOT_TOKEN is invalid or revoked (getMe failed).",
+      "Create a new token in @BotFather and update the Render env var.",
+      error,
+    );
+    // Keep the process alive in webhook mode so /health stays up for ops.
+    if (env.publicBaseUrl) {
+      return;
+    }
+    throw error;
+  }
+
+  console.log(`bot @${me.username} ready`);
+
+  try {
+    await bot.api.setMyCommands([
+      { command: "start", description: "How this bot works" },
+      { command: "help", description: "Usage for /m and /с" },
+      { command: "m", description: "Send an anonymous message" },
+    ]);
+  } catch (error) {
+    console.warn("setMyCommands failed (non-fatal)", error);
+  }
+
+  if (env.publicBaseUrl) {
+    try {
+      const webhookUrl = await registerWebhook(bot, env);
+      console.log(`webhook set: ${webhookUrl}`);
+    } catch (error) {
+      console.error("setWebhook failed", error);
+    }
     return;
   }
 
