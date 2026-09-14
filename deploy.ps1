@@ -1,45 +1,44 @@
 <#
 .SYNOPSIS
-  One-shot deploy of anon-telegram-bot to Render.
+  Deploy anon-telegram-bot to Render from a Docker image (no GitHub repo).
+
+.DESCRIPTION
+  Builds a linux/amd64 image, pushes it to Docker Hub, then creates/updates
+  an image-backed Render web service via the Render API.
 
 .EXAMPLE
-  $env:RENDER_API_KEY = "rnd_..."
-  .\deploy.ps1 -BotToken "123456:AA..."
-
-.EXAMPLE
-  .\deploy.ps1 -BotToken "123456:AA..." -RenderApiKey "rnd_..."
+  $env:RENDER_API_KEY = 'rnd_...'
+  docker login
+  .\deploy.ps1 -BotToken '123456:AA...' -DockerHubUser 'yourname'
 #>
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
   [string]$BotToken,
 
+  [Parameter(Mandatory = $true)]
+  [string]$DockerHubUser,
+
   [string]$RenderApiKey = $env:RENDER_API_KEY,
+
+  [string]$ImageName = "anon-telegram-bot",
+
+  [string]$ImageTag = "latest",
 
   [string]$ServiceName = "anon-telegram-bot",
 
   [ValidateSet("oregon", "frankfurt", "singapore", "ohio", "virginia")]
   [string]$Region = "frankfurt",
 
-  [string]$Branch = "main",
-
-  [string]$OwnerId = "tea-dai85867bikc73c01d7g",
-
-  [string]$GitHubRepo = ""
+  [string]$OwnerId = "tea-dai85867bikc73c01d7g"
 )
 
 $ErrorActionPreference = "Stop"
 
 function New-RandomSecret {
-  # Compatible with Windows PowerShell 5.1 (.NET Framework) and PowerShell 7+
   $bytes = New-Object byte[] 32
   $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-  try {
-    $rng.GetBytes($bytes)
-  }
-  finally {
-    $rng.Dispose()
-  }
+  try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
   return -join ($bytes | ForEach-Object { $_.ToString("x2") })
 }
 
@@ -69,6 +68,49 @@ function Invoke-RenderApi {
   return Invoke-RestMethod @params
 }
 
+function Resolve-DockerCommand {
+  $cmd = Get-Command docker -ErrorAction SilentlyContinue
+  if ($cmd) { return "docker" }
+
+  # Fall back to Docker inside WSL if Desktop CLI is missing on Windows PATH
+  $wsl = Get-Command wsl -ErrorAction SilentlyContinue
+  if ($wsl) {
+    $check = wsl -d Ubuntu -- bash -lc "command -v docker" 2>$null
+    if ($LASTEXITCODE -eq 0 -and $check) {
+      return "wsl"
+    }
+  }
+
+  throw @"
+Docker is required for no-GitHub deploys (Render pulls a container image).
+
+Install Docker Desktop, then re-run:
+
+  winget install --id Docker.DockerDesktop -e
+  # reboot / start Docker Desktop, then:
+  docker login
+  .\deploy.ps1 -BotToken '...' -DockerHubUser 'your-dockerhub-user'
+"@
+}
+
+function Invoke-Docker {
+  param([Parameter(Mandatory = $true)][string[]]$DockerArgs)
+
+  if ($script:DockerMode -eq "wsl") {
+    $joined = ($DockerArgs | ForEach-Object {
+        if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
+      }) -join ' '
+    # Project is under /mnt/c/... in WSL
+    $wslDir = (wsl -d Ubuntu -- wslpath -a $PSScriptRoot).Trim()
+    wsl -d Ubuntu -- bash -lc "cd '$wslDir' && docker $joined"
+    if ($LASTEXITCODE -ne 0) { throw "docker (wsl) failed: docker $joined" }
+    return
+  }
+
+  & docker @DockerArgs
+  if ($LASTEXITCODE -ne 0) { throw "docker failed: docker $($DockerArgs -join ' ')" }
+}
+
 Write-Host "==> Validating Telegram bot token..." -ForegroundColor Cyan
 try {
   $me = Invoke-RestMethod -Uri "https://api.telegram.org/bot$BotToken/getMe"
@@ -83,57 +125,33 @@ if (-not $RenderApiKey) {
   throw @"
 RENDER_API_KEY is missing.
 
-1. Create a key: https://dashboard.render.com/u/*/settings#api-keys
-2. Run:
-
-   `$env:RENDER_API_KEY = 'rnd_...'
-   .\deploy.ps1 -BotToken 'YOUR_BOT_TOKEN'
+  `$env:RENDER_API_KEY = 'rnd_...'
+  .\deploy.ps1 -BotToken '...' -DockerHubUser 'yourname'
 "@
 }
 
+$script:DockerMode = Resolve-DockerCommand
+if ($script:DockerMode -eq "docker") {
+  Write-Host "==> Using local docker CLI" -ForegroundColor Cyan
+} else {
+  Write-Host "==> Using docker via WSL Ubuntu" -ForegroundColor Cyan
+}
+
+$imageLocal = "${DockerHubUser}/${ImageName}:${ImageTag}"
+$imagePath = "docker.io/${DockerHubUser}/${ImageName}:${ImageTag}"
+
 Push-Location $PSScriptRoot
 try {
-  if (-not (Test-Path .git)) {
-    git init | Out-Null
-  }
+  Write-Host "==> Building $imageLocal (linux/amd64)..." -ForegroundColor Cyan
+  Invoke-Docker -DockerArgs @(
+    "build",
+    "--platform", "linux/amd64",
+    "-t", $imageLocal,
+    "."
+  )
 
-  $dirty = git status --porcelain
-  if ($dirty) {
-    Write-Host "==> Committing local changes..." -ForegroundColor Cyan
-    git add -A
-    $env:GIT_AUTHOR_NAME = if ($env:GIT_AUTHOR_NAME) { $env:GIT_AUTHOR_NAME } else { "deploy" }
-    $env:GIT_AUTHOR_EMAIL = if ($env:GIT_AUTHOR_EMAIL) { $env:GIT_AUTHOR_EMAIL } else { "deploy@local" }
-    $env:GIT_COMMITTER_NAME = $env:GIT_AUTHOR_NAME
-    $env:GIT_COMMITTER_EMAIL = $env:GIT_AUTHOR_EMAIL
-    git commit -m "Deploy anon-telegram-bot" | Out-Null
-  }
-
-  $remote = $null
-  try { $remote = git remote get-url origin } catch { $remote = $null }
-
-  if (-not $remote) {
-    if (-not $GitHubRepo) { $GitHubRepo = "anon-telegram-bot" }
-    Write-Host "==> Creating GitHub repo $GitHubRepo ..." -ForegroundColor Cyan
-    gh repo create $GitHubRepo --private --source=. --remote=origin --push
-    $remote = git remote get-url origin
-  }
-  else {
-    Write-Host "==> Pushing to origin/$Branch ..." -ForegroundColor Cyan
-    git branch -M $Branch
-    git push -u origin $Branch
-  }
-
-  if ($remote -match "git@github\.com:(.+?)(?:\.git)?$") {
-    $repoUrl = "https://github.com/$($Matches[1])"
-  }
-  elseif ($remote -match "https://github\.com/(.+?)(?:\.git)?$") {
-    $repoUrl = "https://github.com/$($Matches[1] -replace '\.git$','')"
-  }
-  else {
-    $repoUrl = $remote -replace "\.git$", ""
-  }
-
-  Write-Host "    Repo: $repoUrl" -ForegroundColor Green
+  Write-Host "==> Pushing $imagePath ..." -ForegroundColor Cyan
+  Invoke-Docker -DockerArgs @("push", $imageLocal)
 
   $webhookSecret = New-RandomSecret
 
@@ -146,39 +164,43 @@ try {
   ) | Select-Object -First 1
 
   if ($existing) {
-    Write-Host "    Updating env vars on $($existing.id)" -ForegroundColor Yellow
+    Write-Host "    Updating image + env on $($existing.id)" -ForegroundColor Yellow
     $serviceId = $existing.id
+
+    # Update env vars
     $envBody = @(
       @{ key = "TELEGRAM_BOT_TOKEN"; value = $BotToken }
       @{ key = "WEBHOOK_SECRET"; value = $webhookSecret }
       @{ key = "NODE_ENV"; value = "production" }
     )
     Invoke-RenderApi -Method PUT -Path "/services/$serviceId/env-vars" -Body $envBody | Out-Null
-    Invoke-RenderApi -Method POST -Path "/services/$serviceId/deploys" -Body @{ clearCache = "clear" } | Out-Null
+
+    # Trigger deploy of the new image tag
+    Invoke-RenderApi -Method POST -Path "/services/$serviceId/deploys" -Body @{
+      clearCache = "clear"
+      imageUrl   = $imagePath
+    } | Out-Null
   }
   else {
-    Write-Host "==> Creating Render web service in $Region..." -ForegroundColor Cyan
+    Write-Host "==> Creating image-backed Render web service..." -ForegroundColor Cyan
     $createBody = @{
-      type      = "web_service"
-      name      = $ServiceName
-      ownerId   = $OwnerId
-      repo      = $repoUrl
-      branch    = $Branch
-      autoDeploy = "yes"
-      envVars   = @(
+      type    = "web_service"
+      name    = $ServiceName
+      ownerId = $OwnerId
+      image   = @{
+        ownerId   = $OwnerId
+        imagePath = $imagePath
+      }
+      envVars = @(
         @{ key = "TELEGRAM_BOT_TOKEN"; value = $BotToken }
         @{ key = "WEBHOOK_SECRET"; value = $webhookSecret }
         @{ key = "NODE_ENV"; value = "production" }
       )
       serviceDetails = @{
-        runtime            = "node"
-        plan               = "free"
-        region             = $Region
-        healthCheckPath    = "/health"
-        envSpecificDetails = @{
-          buildCommand = "npm ci && npm run build"
-          startCommand = "npm start"
-        }
+        runtime         = "image"
+        plan            = "free"
+        region          = $Region
+        healthCheckPath = "/health"
       }
     }
 
@@ -192,15 +214,13 @@ try {
   $url = $service.serviceDetails.url
 
   Write-Host ""
-  Write-Host "Deploy started." -ForegroundColor Green
+  Write-Host "Deploy started (no GitHub involved)." -ForegroundColor Green
   Write-Host "Dashboard: https://dashboard.render.com/web/$serviceId"
   if ($url) {
     Write-Host "URL:       $url"
     Write-Host "Health:    $url/health"
   }
-  Write-Host ""
-  Write-Host "On boot the bot registers its Telegram webhook via RENDER_EXTERNAL_URL." -ForegroundColor Cyan
-  Write-Host "In groups: promote the bot and allow Delete messages so /m and /с can scrub yours." -ForegroundColor Cyan
+  Write-Host "Image:     $imagePath"
 }
 finally {
   Pop-Location
