@@ -1,10 +1,27 @@
 import { createBot } from "./bot.js";
 import { loadEnv } from "./env.js";
+import { createOpenCodeClient } from "./llm/opencode.js";
 import { registerWebhook, startWebhookServer } from "./server.js";
 
 async function main(): Promise<void> {
   const env = loadEnv();
-  const bot = createBot(env.TELEGRAM_BOT_TOKEN);
+
+  const llm = env.OPENCODE_API_KEY
+    ? createOpenCodeClient(env.OPENCODE_API_KEY, {
+        model: env.OPENCODE_MODEL,
+        baseURL: env.OPENCODE_BASE_URL,
+      })
+    : undefined;
+
+  if (llm) {
+    console.log(`OpenCode Zen enabled: model=${llm.model}`);
+  } else {
+    console.warn("OPENCODE_API_KEY not set — /ai disabled");
+  }
+
+  const bot = llm
+    ? createBot(env.TELEGRAM_BOT_TOKEN, { llm })
+    : createBot(env.TELEGRAM_BOT_TOKEN);
 
   // Bring HTTP up first so Render health checks pass while Telegram is configured.
   if (env.publicBaseUrl) {
@@ -30,11 +47,18 @@ async function main(): Promise<void> {
   console.log(`bot @${me.username} ready`);
 
   try {
-    await bot.api.setMyCommands([
+    const commands = [
       { command: "start", description: "How this bot works" },
       { command: "help", description: "Usage for /m and /с" },
       { command: "m", description: "Send an anonymous message" },
-    ]);
+    ];
+    if (llm) {
+      commands.push({
+        command: "ai",
+        description: "Ask Muse Spark (OpenCode free)",
+      });
+    }
+    await bot.api.setMyCommands(commands);
   } catch (error) {
     console.warn("setMyCommands failed (non-fatal)", error);
   }
