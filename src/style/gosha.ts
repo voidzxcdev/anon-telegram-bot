@@ -4,11 +4,11 @@ import { DASH_RULE } from "../llm/types.js";
 import type { PersonaBot } from "./learners.js";
 
 /**
- * Matches Гоша in common Russian cases + short/diminutive forms + Latin "gosha".
- * Case-insensitive (гоша / ГОША / Гошу / гоше / гош …).
+ * Matches Гоша in common Russian cases + shorts/diminutives + Latin "gosha".
+ * Includes гошик / гошанчик and case/declension variants. Case-insensitive.
  */
 const GOSHA_RE =
-  /(?<!\p{L})(?:гош(?:а|и|е|у|ей|ею|ью|ка|ки|ке|ку|кой|кою)?|gosha)(?!\p{L})/iu;
+  /(?<!\p{L})(?:гошанчик(?:а|у|е|ом|ов|ами|ах)?|гошик(?:а|у|е|ом|ов|ами|ах)?|гош(?:а|и|е|у|ей|ею|ью|ка|ки|ке|ку|кой|кою)?|gosha)(?!\p{L})/iu;
 
 /** Hard cap - models love essays; keep Гоша chat-sized. */
 const MAX_REPLY = 160;
