@@ -2,6 +2,7 @@ import { createBot } from "./bot.js";
 import { loadEnv } from "./env.js";
 import { createLlmClient, parseOpenRouterKeys } from "./llm/client.js";
 import { registerWebhook, startKeepAlive, startWebhookServer } from "./server.js";
+import { setCloudflareImageConfig } from "./style/image-gen.js";
 import { createTwinLearners } from "./style/learners.js";
 
 const TRAIN_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
@@ -29,6 +30,18 @@ async function main(): Promise<void> {
     ...(env.GEMINI_API_KEY ? { geminiApiKey: env.GEMINI_API_KEY } : {}),
     ...(env.publicBaseUrl ? { siteUrl: env.publicBaseUrl } : {}),
   });
+
+  if (env.CLOUDFLARE_ACCOUNT_ID && env.CLOUDFLARE_API_TOKEN) {
+    setCloudflareImageConfig({
+      accountId: env.CLOUDFLARE_ACCOUNT_ID,
+      apiToken: env.CLOUDFLARE_API_TOKEN,
+    });
+    console.log("image gen: Cloudflare Workers AI FLUX.1-schnell");
+  } else {
+    console.warn(
+      "CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN missing — image gen disabled",
+    );
+  }
 
   // Both persona bots share one StyleStore — /m or /с on this Telegram bot trains both.
   const twins = createTwinLearners(llm);

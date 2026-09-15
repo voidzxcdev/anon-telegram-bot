@@ -2,8 +2,9 @@ import type { Context } from "grammy";
 import { InputFile } from "grammy";
 
 import { DASH_RULE } from "../llm/types.js";
+import { sleep } from "../llm/types.js";
 import {
-  generatePollinationsImage,
+  generateCloudflareFluxImage,
   wantsImageGeneration,
 } from "./image-gen.js";
 import type { PersonaBot } from "./learners.js";
@@ -19,7 +20,7 @@ const GOSHA_RE =
 const MAX_REPLY = 160;
 
 const THINKING_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
-const THINKING_TICK_MS = 180;
+const THINKING_TICK_MS = 120;
 
 export function mentionsGosha(text: string | undefined): boolean {
   if (!text) return false;
@@ -33,36 +34,40 @@ function truncate(text: string): string {
   return `${cleaned.slice(0, MAX_REPLY - 1).trimEnd()}…`;
 }
 
+/**
+ * Smooth sequential spinner so Telegram latency cannot freeze frames.
+ */
 function startThinkingAnimation(
   edit: (text: string) => Promise<void>,
+  label: string,
 ): () => void {
   let frame = 0;
   let stopped = false;
-  let inFlight = false;
 
-  const timer = setInterval(() => {
-    if (stopped || inFlight) return;
-    frame = (frame + 1) % THINKING_FRAMES.length;
-    const text = THINKING_FRAMES[frame]!;
-    inFlight = true;
-    void edit(text)
-      .catch(() => {
-        // ignore flood / unchanged / deleted
-      })
-      .finally(() => {
-        inFlight = false;
-      });
-  }, THINKING_TICK_MS);
+  const loop = async () => {
+    while (!stopped) {
+      const text = `${THINKING_FRAMES[frame]!} ${label}`;
+      frame = (frame + 1) % THINKING_FRAMES.length;
+      try {
+        await edit(text);
+      } catch {
+        // ignore flood / deleted
+      }
+      if (stopped) break;
+      await sleep(THINKING_TICK_MS);
+    }
+  };
+
+  void loop();
 
   return () => {
     stopped = true;
-    clearInterval(timer);
   };
 }
 
 /**
  * When a message contains "Гоша", reply once in the shared learned style.
- * Image requests -> refine English prompt via LLM, then Pollinations.
+ * Image requests -> English FLUX prompt via LLM, then Cloudflare Workers AI.
  */
 export async function handleGoshaMention(
   ctx: Context,
@@ -73,19 +78,22 @@ export async function handleGoshaMention(
     return;
   }
 
-  const status = await ctx.reply(THINKING_FRAMES[0]!);
+  const isImage = wantsImageGeneration(sourceText);
+  const label = isImage ? "Гоша генерирует фото" : "Гоша печатает";
+
+  const status = await ctx.reply(`${THINKING_FRAMES[0]!} ${label}`);
   const chatId = status.chat.id;
   const messageId = status.message_id;
 
   const stopThinking = startThinkingAnimation(async (text) => {
     await ctx.api.editMessageText(chatId, messageId, text);
-  });
+  }, label);
 
   try {
-    if (wantsImageGeneration(sourceText)) {
+    if (isImage) {
       const prompt = await speaker.makeImagePrompt(sourceText);
-      console.log(`Pollinations prompt: ${prompt}`);
-      const image = await generatePollinationsImage(prompt);
+      console.log(`Cloudflare FLUX prompt: ${prompt}`);
+      const image = await generateCloudflareFluxImage(prompt);
       stopThinking();
       try {
         await ctx.api.deleteMessage(chatId, messageId);
@@ -95,9 +103,6 @@ export async function handleGoshaMention(
       await ctx.api.sendPhoto(
         chatId,
         new InputFile(image.bytes, "gosha.jpg"),
-        {
-          caption: truncate(prompt),
-        },
       );
       return;
     }

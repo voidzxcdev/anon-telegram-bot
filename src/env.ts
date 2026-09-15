@@ -24,6 +24,9 @@ const envSchema = z.object({
   GROQ_API_KEY: z.string().min(1).optional(),
   /** Google AI Studio - https://aistudio.google.com/apikey */
   GEMINI_API_KEY: z.string().min(1).optional(),
+  /** Cloudflare Workers AI (FLUX images) - account id + API token. */
+  CLOUDFLARE_ACCOUNT_ID: z.string().min(1).optional(),
+  CLOUDFLARE_API_TOKEN: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof envSchema> & {

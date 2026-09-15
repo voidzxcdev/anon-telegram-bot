@@ -34,7 +34,7 @@ export function createBot(token: string, deps: BotDeps = {}): Bot {
         "- Reply to any message, then use /m or /с\n" +
         "- In groups, make me admin with Delete messages so I can remove yours\n" +
         "- Say Гоша / Гошу / гошик (any case) for one AI reply\n" +
-        "- Гоша нарисуй … / generate image - AI prompt + Pollinations pic\n\n" +
+        "- Гоша нарисуй … → FLUX image (Cloudflare Workers AI)\n\n" +
         "Style learning: every /m and /с feeds one shared corpus for both persona bots.",
     );
   });
