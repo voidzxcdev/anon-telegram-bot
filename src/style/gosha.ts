@@ -1,6 +1,11 @@
 import type { Context } from "grammy";
+import { InputFile } from "grammy";
 
 import { DASH_RULE } from "../llm/types.js";
+import {
+  generatePollinationsImage,
+  wantsImageGeneration,
+} from "./image-gen.js";
 import type { PersonaBot } from "./learners.js";
 
 /**
@@ -57,6 +62,7 @@ function startThinkingAnimation(
 
 /**
  * When a message contains "Гоша", reply once in the shared learned style.
+ * Image requests -> refine English prompt via LLM, then Pollinations.
  */
 export async function handleGoshaMention(
   ctx: Context,
@@ -76,6 +82,26 @@ export async function handleGoshaMention(
   });
 
   try {
+    if (wantsImageGeneration(sourceText)) {
+      const prompt = await speaker.makeImagePrompt(sourceText);
+      console.log(`Pollinations prompt: ${prompt}`);
+      const image = await generatePollinationsImage(prompt);
+      stopThinking();
+      try {
+        await ctx.api.deleteMessage(chatId, messageId);
+      } catch {
+        // ignore
+      }
+      await ctx.api.sendPhoto(
+        chatId,
+        new InputFile(image.bytes, "gosha.jpg"),
+        {
+          caption: truncate(prompt),
+        },
+      );
+      return;
+    }
+
     await speaker.loadSharedProfile();
     const profile = speaker.getProfile();
     const card =

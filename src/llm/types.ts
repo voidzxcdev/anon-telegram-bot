@@ -5,10 +5,17 @@ export type ChatMessage = {
   content: string;
 };
 
+export type CompleteOptions = {
+  maxTokens?: number;
+};
+
 export type LlmClient = {
   /** Last model that succeeded (or primary if none yet). */
   model: string;
-  complete: (messages: ChatMessage[]) => Promise<string>;
+  complete: (
+    messages: ChatMessage[],
+    options?: CompleteOptions,
+  ) => Promise<string>;
 };
 
 /** @deprecated use LlmClient */

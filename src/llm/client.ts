@@ -131,6 +131,7 @@ function buildTargets(config: LlmProviderConfig): ChatTarget[] {
 async function completeOnce(
   target: ChatTarget,
   messages: ChatMessage[],
+  maxTokens = 80,
 ): Promise<string> {
   const res = await fetch(target.url, {
     method: "POST",
@@ -143,7 +144,7 @@ async function completeOnce(
     body: JSON.stringify({
       model: target.model,
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
-      max_tokens: 80,
+      max_tokens: maxTokens,
       ...target.extraBody,
     }),
   });
@@ -203,9 +204,13 @@ export function createLlmClient(config: LlmProviderConfig): LlmClient {
     get model() {
       return lastModel;
     },
-    async complete(messages: ChatMessage[]): Promise<string> {
+    async complete(
+      messages: ChatMessage[],
+      options?: { maxTokens?: number },
+    ): Promise<string> {
       const now = Date.now();
       const errors: string[] = [];
+      const maxTokens = options?.maxTokens ?? 80;
 
       for (let i = 0; i < targets.length; i++) {
         const idx = (cursor + i) % targets.length;
@@ -213,7 +218,7 @@ export function createLlmClient(config: LlmProviderConfig): LlmClient {
         if ((badUntil.get(target.label) ?? 0) > now) continue;
 
         try {
-          const text = await completeOnce(target, messages);
+          const text = await completeOnce(target, messages, maxTokens);
           cursor = (idx + 1) % targets.length;
           badUntil.delete(target.label);
           lastModel = target.label;

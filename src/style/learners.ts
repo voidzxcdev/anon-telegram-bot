@@ -1,6 +1,7 @@
 import type { LlmClient } from "../llm/types.js";
 import { DASH_RULE } from "../llm/types.js";
 import { goshaSystemRules } from "./gosha.js";
+import { refineImagePrompt } from "./image-gen.js";
 import {
   getSharedStyleStore,
   type StyleProfile,
@@ -89,6 +90,14 @@ export class PersonaBot {
           userMessage,
       },
     ]);
+  }
+
+  /** Translate / improve an image request into one English Pollinations prompt. */
+  async makeImagePrompt(userMessage: string): Promise<string> {
+    if (!this.llm) {
+      throw new Error("LLM API key required");
+    }
+    return refineImagePrompt(this.llm, userMessage);
   }
 }
 
