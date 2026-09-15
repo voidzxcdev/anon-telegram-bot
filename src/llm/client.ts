@@ -74,28 +74,7 @@ function buildTargets(config: LlmProviderConfig): ChatTarget[] {
     config.siteUrl ?? "https://github.com/voidzxcdev/anon-telegram-bot";
   const app = config.appName ?? "anon-telegram-bot";
 
-  if (config.groqApiKey) {
-    for (const model of GROQ_MODELS) {
-      targets.push({
-        label: `groq/${model}`,
-        url: GROQ_URL,
-        model,
-        apiKey: config.groqApiKey,
-      });
-    }
-  }
-
-  if (config.geminiApiKey) {
-    for (const model of GEMINI_MODELS) {
-      targets.push({
-        label: `gemini/${model}`,
-        url: GEMINI_URL,
-        model,
-        apiKey: config.geminiApiKey,
-      });
-    }
-  }
-
+  // Order: OpenRouter → Groq GPT-OSS → Gemini Flash
   const orKeys = (config.openRouterKeys ?? []).map((k) => k.trim()).filter(Boolean);
   const orModels = [
     ...(config.openRouterModel ? [config.openRouterModel] : []),
@@ -124,6 +103,28 @@ function buildTargets(config: LlmProviderConfig): ChatTarget[] {
     }
   }
 
+  if (config.groqApiKey) {
+    for (const model of GROQ_MODELS) {
+      targets.push({
+        label: `groq/${model}`,
+        url: GROQ_URL,
+        model,
+        apiKey: config.groqApiKey,
+      });
+    }
+  }
+
+  if (config.geminiApiKey) {
+    for (const model of GEMINI_MODELS) {
+      targets.push({
+        label: `gemini/${model}`,
+        url: GEMINI_URL,
+        model,
+        apiKey: config.geminiApiKey,
+      });
+    }
+  }
+
   return targets;
 }
 
@@ -142,6 +143,7 @@ async function completeOnce(
     body: JSON.stringify({
       model: target.model,
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      max_tokens: 80,
       ...target.extraBody,
     }),
   });
@@ -183,7 +185,7 @@ async function completeOnce(
 }
 
 /**
- * Multi-provider free LLM: Groq GPT-OSS → Gemini Flash → OpenRouter free.
+ * Multi-provider free LLM: OpenRouter → Groq GPT-OSS → Gemini Flash.
  */
 export function createLlmClient(config: LlmProviderConfig): LlmClient {
   const targets = buildTargets(config);

@@ -68,10 +68,15 @@ export class PersonaBot {
     ]);
   }
 
-  async speakAsGosha(userMessage: string, styleCard: string): Promise<string> {
+  async speakAsGosha(
+    userMessage: string,
+    styleCard: string,
+    fromHandle?: string,
+  ): Promise<string> {
     if (!this.llm) {
       throw new Error("LLM API key required");
     }
+    const who = fromHandle ? `Speaker: ${fromHandle}\n` : "";
     return this.llm.complete([
       {
         role: "system",
@@ -80,7 +85,7 @@ export class PersonaBot {
       {
         role: "user",
         content:
-          "Someone mentioned you (Гоша) in this chat message. Answer as Гоша with one short normal message. No intro, no @names, no lifehacks.\n\n" +
+          `${who}They mentioned you (Гоша). Reply as Гоша: short, modern, not cringe, no lifehacks. @ them if it fits.\n\n` +
           userMessage,
       },
     ]);

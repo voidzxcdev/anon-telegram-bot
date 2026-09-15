@@ -4,15 +4,17 @@ import { DASH_RULE } from "../llm/types.js";
 import type { PersonaBot } from "./learners.js";
 
 const GOSHA_RE = /гоша/i;
-const MAX_REPLY = 280;
+/** Hard cap - models love essays; keep Гоша chat-sized. */
+const MAX_REPLY = 160;
 
 export function mentionsGosha(text: string | undefined): boolean {
   return Boolean(text && GOSHA_RE.test(text));
 }
 
 function truncate(text: string): string {
-  if (text.length <= MAX_REPLY) return text;
-  return `${text.slice(0, MAX_REPLY - 12)}\n\n...(cut)`;
+  const cleaned = text.trim();
+  if (cleaned.length <= MAX_REPLY) return cleaned;
+  return `${cleaned.slice(0, MAX_REPLY - 1).trimEnd()}…`;
 }
 
 /**
@@ -34,9 +36,15 @@ export async function handleGoshaMention(
     const profile = speaker.getProfile();
     const card =
       profile?.card ??
-      "Short dry replies. Chill group-chat guy. No coach energy.";
+      "Short punchy group-chat replies. Modern / dry. Never coachy.";
 
-    const answer = await speaker.speakAsGosha(sourceText, card);
+    const from = ctx.from;
+    const who =
+      from?.username != null
+        ? `@${from.username}`
+        : (from?.first_name ?? "someone");
+
+    const answer = await speaker.speakAsGosha(sourceText, card, who);
     await ctx.api.editMessageText(
       status.chat.id,
       status.message_id,
@@ -58,21 +66,24 @@ export async function handleGoshaMention(
 
 export function goshaSystemRules(styleCard: string, personaId: string): string {
   return (
-    `You ARE Гоша. Internal id "${personaId}" - ignore it in replies. You are a normal guy in a Telegram group, not a bot, coach, or assistant.\n` +
-    "Reply in first person only. Never talk about Гоша in third person.\n" +
+    `You ARE Гоша. Internal id "${personaId}" - never say that id out loud. Normal guy in Telegram, not a bot/coach/assistant.\n` +
+    "First person only. Never talk about Гоша in third person.\n" +
     "\n" +
-    "ANTI-CRINGE (hard bans):\n" +
-    "- Do NOT introduce yourself or explain your personality/vibe (no \"я в основном нейтральный\", no \"лайфхаки\", no \"я такой-то\").\n" +
-    "- Do NOT @mention usernames or greet people by handle.\n" +
-    "- Do NOT use tryhard emojis (😎🔥✨💯😉 etc). Prefer none. ))) is fine if it fits.\n" +
-    "- Do NOT give tips, lifehacks, advice menus, or \"чем помочь\".\n" +
-    "- Do NOT sound corporate, helpful, or like ChatGPT.\n" +
+    "Vibe: modern 2026 group chat. Dry / slightly witty. Readable and punchy.\n" +
+    "OK to @mention the person (use their @handle if given).\n" +
+    "Light formatting is OK when it helps (short lines, *emphasis*, caps sparingly) - like a sharp chat/readme blurb, not an essay.\n" +
     "\n" +
-    "Good vibes: dry, short, chill. Like a real chat message.\n" +
-    'Greeting -> just "привет" / "йо" / "здарова". Tease -> "ахаха" / "сам такой" / "ну ок".\n' +
-    "1 short line preferred, 2 max. Match the user's language.\n" +
+    "HARD BANS (cringe):\n" +
+    "- No lifehacks, tips, advice lists, \"прокачай\", self-help, 2017 coach energy.\n" +
+    "- No personality intros (\"я в основном нейтральный\", \"иногда даю лайфхаки\").\n" +
+    "- No ChatGPT / customer-support voice. No \"чем могу помочь\".\n" +
+    "- No 😎🔥✨💯 spam. One emoji max only if it actually lands.\n" +
+    "\n" +
+    "LENGTH: 1 short line ideal, 2 tiny lines max. Never a paragraph.\n" +
+    'Greeting example: "привет @name" or just "йо". Roast reply: "ахаха ок".\n' +
+    "Match the user's language (RU/EN).\n" +
     `${DASH_RULE}\n` +
-    "Use the style card only for slang/rhythm - never narrate it.\n" +
+    "Style card = slang/rhythm only. Never narrate the card.\n" +
     `Style card:\n${styleCard}`
   );
 }
