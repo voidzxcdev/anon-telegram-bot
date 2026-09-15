@@ -7,12 +7,24 @@ import {
 } from "./types.js";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-const DEFAULT_MODEL = "poolside/laguna-s-2.1:free";
+
+/** Primary + free fallbacks when Laguna is blocked / rate-limited. */
+const DEFAULT_MODELS = [
+  "poolside/laguna-s-2.1:free",
+  "poolside/laguna-xs-2.1:free",
+  "nex-agi/nex-n2.5-mini:free",
+  "liquid/lfm-2.5-2.6b:free",
+] as const;
+
+/** Skip a key for a while after privacy/config errors (won't magically work next try). */
+const BAD_KEY_COOLDOWN_MS = 30 * 60 * 1000;
 
 export type LlmProviderConfig = {
   /** One or more OpenRouter API keys (rotated on rate limits). */
   apiKeys: string[];
+  /** Primary model; fallbacks still tried if this fails. */
   model?: string;
+  models?: readonly string[];
   /** Optional app attribution for OpenRouter rankings. */
   siteUrl?: string;
   appName?: string;
@@ -35,8 +47,15 @@ function parseOpenRouterError(raw: string): string {
   return raw.slice(0, 220);
 }
 
+function isPrivacyOrProviderConfigError(message: string): boolean {
+  return /guardrail|data policy|training violation|allowed-providers|allowed providers|settings\/privacy/i.test(
+    message,
+  );
+}
+
 /**
- * OpenRouter client with multi-key rotation for free-model rate limits.
+ * OpenRouter client: rotate keys + free model fallbacks.
+ * Tip: each account must allow free / Poolside at https://openrouter.ai/settings/privacy
  */
 export function createLlmClient(config: LlmProviderConfig): LlmClient {
   const keys = config.apiKeys.map((k) => k.trim()).filter(Boolean);
@@ -44,13 +63,20 @@ export function createLlmClient(config: LlmProviderConfig): LlmClient {
     throw new Error("OPENROUTER_API_KEYS is required (comma-separated)");
   }
 
-  const model = config.model ?? DEFAULT_MODEL;
-  let keyIndex = 0;
-  let lastModel = `openrouter/${model}`;
+  const models = [
+    ...(config.model ? [config.model] : []),
+    ...(config.models ?? DEFAULT_MODELS),
+  ].filter((m, i, arr) => arr.indexOf(m) === i);
 
-  async function completeWithKey(
+  let keyIndex = 0;
+  let lastModel = `openrouter/${models[0]}`;
+  /** key index -> cooldown until */
+  const badUntil = new Map<number, number>();
+
+  async function completeOnce(
     apiKey: string,
     keyLabel: string,
+    model: string,
     messages: ChatMessage[],
   ): Promise<string> {
     const res = await fetch(OPENROUTER_URL, {
@@ -59,19 +85,25 @@ export function createLlmClient(config: LlmProviderConfig): LlmClient {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
         Accept: "application/json",
-        "HTTP-Referer": config.siteUrl ?? "https://github.com/voidzxcdev/anon-telegram-bot",
+        "HTTP-Referer":
+          config.siteUrl ?? "https://github.com/voidzxcdev/anon-telegram-bot",
         "X-Title": config.appName ?? "anon-telegram-bot",
       },
       body: JSON.stringify({
         model,
         messages: messages.map((m) => ({ role: m.role, content: m.content })),
+        // Prefer free endpoints that may train; still overridden by strict account privacy.
+        provider: {
+          data_collection: "allow",
+          allow_fallbacks: true,
+        },
       }),
     });
 
     const raw = await res.text();
     if (!res.ok) {
       const err = new Error(
-        `${keyLabel} HTTP ${res.status}: ${parseOpenRouterError(raw)}`,
+        `${keyLabel}/${model} HTTP ${res.status}: ${parseOpenRouterError(raw)}`,
       );
       (err as { status?: number }).status = res.status;
       throw err;
@@ -88,7 +120,7 @@ export function createLlmClient(config: LlmProviderConfig): LlmClient {
           typeof json.error === "string"
             ? json.error
             : (json.error.message ?? JSON.stringify(json.error));
-        throw new Error(`${keyLabel}: ${msg}`);
+        throw new Error(`${keyLabel}/${model}: ${msg}`);
       }
       content = json.choices?.[0]?.message?.content?.trim() ?? "";
     } catch (error) {
@@ -99,7 +131,7 @@ export function createLlmClient(config: LlmProviderConfig): LlmClient {
     }
 
     if (!content) {
-      throw new Error(`${keyLabel} returned empty completion`);
+      throw new Error(`${keyLabel}/${model} returned empty completion`);
     }
     return normalizeDashes(content);
   }
@@ -109,36 +141,50 @@ export function createLlmClient(config: LlmProviderConfig): LlmClient {
       return lastModel;
     },
     async complete(messages: ChatMessage[]): Promise<string> {
-      const errors: string[] = [];
-      const start = keyIndex;
-
+      const now = Date.now();
+      const order: number[] = [];
       for (let i = 0; i < keys.length; i++) {
-        const idx = (start + i) % keys.length;
-        const apiKey = keys[idx]!;
-        const keyLabel = `openrouter-key${idx + 1}`;
+        const idx = (keyIndex + i) % keys.length;
+        const until = badUntil.get(idx) ?? 0;
+        if (until > now) continue;
+        order.push(idx);
+      }
+      // If every key is in privacy cooldown, try them anyway (settings may have changed).
+      if (order.length === 0) {
+        for (let i = 0; i < keys.length; i++) {
+          order.push((keyIndex + i) % keys.length);
+        }
+      }
 
-        try {
-          const text = await completeWithKey(apiKey, keyLabel, messages);
-          keyIndex = (idx + 1) % keys.length;
-          lastModel = `openrouter/${model}`;
-          if (i > 0) {
-            console.warn(`LLM succeeded with ${keyLabel} after failover`);
-          }
-          return text;
-        } catch (error) {
-          const detail =
-            error instanceof Error ? error.message : String(error);
-          errors.push(`${keyLabel}: ${detail}`);
-          console.warn(`LLM failed (${keyLabel}):`, detail);
-          if (isRateLimitError(error)) {
-            await sleep(400);
+      for (const model of models) {
+        for (const idx of order) {
+          const apiKey = keys[idx]!;
+          const keyLabel = `key${idx + 1}`;
+          try {
+            const text = await completeOnce(apiKey, keyLabel, model, messages);
+            keyIndex = (idx + 1) % keys.length;
+            badUntil.delete(idx);
+            lastModel = `openrouter/${model}`;
+            return text;
+          } catch (error) {
+            const detail =
+              error instanceof Error ? error.message : String(error);
+            console.warn(`LLM failed (${keyLabel}/${model}):`, detail);
+            if (isPrivacyOrProviderConfigError(detail)) {
+              badUntil.set(idx, Date.now() + BAD_KEY_COOLDOWN_MS);
+              console.warn(
+                `${keyLabel}: privacy/provider block - fix at https://openrouter.ai/settings/privacy (cooldown 30m)`,
+              );
+              break; // same key won't work for other free models either if providers locked
+            }
+            if (isRateLimitError(error)) {
+              await sleep(300);
+            }
           }
         }
       }
 
-      throw new Error(
-        `All OpenRouter keys failed for ${model}. Tried ${keys.length} key(s).`,
-      );
+      throw new Error("All OpenRouter keys/models failed");
     },
   };
 }
