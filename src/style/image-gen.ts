@@ -64,13 +64,16 @@ export type GeneratedImage = {
   prompt: string;
 };
 
-export class ImageGenError extends Error {
-  readonly userMessage: string;
+/** User-facing line for any failed image generation. */
+export const IMAGE_GEN_FAIL_MESSAGE =
+  "Я не смог сгенерировать brochacho ✌️🥀";
 
-  constructor(userMessage: string, detail: string) {
+export class ImageGenError extends Error {
+  readonly userMessage = IMAGE_GEN_FAIL_MESSAGE;
+
+  constructor(detail: string) {
     super(detail);
     this.name = "ImageGenError";
-    this.userMessage = userMessage;
   }
 }
 
@@ -94,9 +97,7 @@ export async function generateCloudflareFluxImage(
   const hasGemini = Boolean(cfg?.geminiApiKey);
 
   if (!hasCf && !hasGemini) {
-    throw new ImageGenError(
-      "Фото выключено — нет ключей",
-      "Need CLOUDFLARE_* and/or GEMINI_API_KEY for images",
+    throw new ImageGenError("Need CLOUDFLARE_* and/or GEMINI_API_KEY for images",
     );
   }
 
@@ -122,7 +123,7 @@ export async function generateCloudflareFluxImage(
 
   throw cfError instanceof Error
     ? cfError
-    : new ImageGenError("Фото не собралось", String(cfError));
+    : new ImageGenError(String(cfError));
 }
 
 async function generateViaCloudflare(prompt: string): Promise<GeneratedImage> {
@@ -168,9 +169,7 @@ async function generateViaGemini(prompt: string): Promise<GeneratedImage> {
 
   const raw = await res.text();
   if (!res.ok) {
-    throw new ImageGenError(
-      "Gemini фото тоже не вывезло, попробуй позже",
-      `Gemini image HTTP ${res.status}: ${raw.slice(0, 220)}`,
+    throw new ImageGenError(`Gemini image HTTP ${res.status}: ${raw.slice(0, 220)}`,
     );
   }
 
@@ -182,26 +181,20 @@ async function generateViaGemini(prompt: string): Promise<GeneratedImage> {
   try {
     json = JSON.parse(raw) as typeof json;
   } catch {
-    throw new ImageGenError(
-      "Gemini фото сломалось",
-      `Gemini image bad JSON: ${raw.slice(0, 160)}`,
+    throw new ImageGenError(`Gemini image bad JSON: ${raw.slice(0, 160)}`,
     );
   }
 
   const parts = json.candidates?.[0]?.content?.parts ?? [];
   const data = parts.map((p) => p.inlineData?.data).find(Boolean);
   if (!data) {
-    throw new ImageGenError(
-      "Gemini фото пустое",
-      `Gemini image no inline data: ${raw.slice(0, 200)}`,
+    throw new ImageGenError(`Gemini image no inline data: ${raw.slice(0, 200)}`,
     );
   }
 
   const bytes = Buffer.from(data, "base64");
   if (bytes.length < 1000) {
-    throw new ImageGenError(
-      "Gemini фото пустое",
-      "Gemini image too small",
+    throw new ImageGenError("Gemini image too small",
     );
   }
   return { bytes, prompt };
@@ -226,46 +219,27 @@ function decodeCloudflareImage(raw: string): Buffer {
   } catch (error) {
     if (error instanceof ImageGenError) throw error;
     if (error instanceof SyntaxError) {
-      throw new ImageGenError(
-        "Фото сломалось, попробуй ещё раз",
-        `Cloudflare AI bad JSON: ${raw.slice(0, 160)}`,
+      throw new ImageGenError(`Cloudflare AI bad JSON: ${raw.slice(0, 160)}`,
       );
     }
     throw error;
   }
 
   if (!imageB64) {
-    throw new ImageGenError(
-      "Фото пустое пришло, попробуй ещё раз",
-      "Cloudflare AI returned no image",
+    throw new ImageGenError("Cloudflare AI returned no image",
     );
   }
 
   const bytes = Buffer.from(imageB64, "base64");
   if (bytes.length < 1000) {
-    throw new ImageGenError(
-      "Фото пустое пришло, попробуй ещё раз",
-      "Cloudflare AI image too small / empty",
+    throw new ImageGenError("Cloudflare AI image too small / empty",
     );
   }
   return bytes;
 }
 
 function mapCloudflareFailure(status: number, raw: string): ImageGenError {
-  if (isNeuronExhausted(raw)) {
-    return new ImageGenError(
-      "Лимит Cloudflare на сегодня кончился, завтра ок",
-      `Cloudflare AI HTTP ${status}: ${raw.slice(0, 220)}`,
-    );
-  }
-  if (status === 401 || status === 403) {
-    return new ImageGenError(
-      "Cloudflare ключ отвалился",
-      `Cloudflare AI HTTP ${status}: ${raw.slice(0, 220)}`,
-    );
-  }
   return new ImageGenError(
-    "Фото не собралось, попробуй ещё раз",
     `Cloudflare AI HTTP ${status}: ${raw.slice(0, 220)}`,
   );
 }

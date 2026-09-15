@@ -5,6 +5,7 @@ import { DASH_RULE } from "../llm/types.js";
 import { sleep } from "../llm/types.js";
 import {
   generateCloudflareFluxImage,
+  IMAGE_GEN_FAIL_MESSAGE,
   ImageGenError,
   wantsImageGeneration,
 } from "./image-gen.js";
@@ -161,8 +162,9 @@ export async function handleGoshaMention(
   } catch (error) {
     console.error("Гоша reply failed", error);
     stopPulse();
-    const sorry =
-      error instanceof ImageGenError
+    const sorry = isImage
+      ? IMAGE_GEN_FAIL_MESSAGE
+      : error instanceof ImageGenError
         ? error.userMessage
         : "Не смог ответить сорри";
     try {
