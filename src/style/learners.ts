@@ -1,7 +1,7 @@
 import type { LlmClient } from "../llm/types.js";
 import { DASH_RULE } from "../llm/types.js";
 import { goshaSystemRules } from "./gosha.js";
-import { refineImagePrompt } from "./image-gen.js";
+import { extractImagePrompt } from "./image-gen.js";
 import {
   getSharedStyleStore,
   type StyleProfile,
@@ -92,12 +92,9 @@ export class PersonaBot {
     ]);
   }
 
-  /** Translate / improve an image request into one English Pollinations prompt. */
-  async makeImagePrompt(userMessage: string): Promise<string> {
-    if (!this.llm) {
-      throw new Error("LLM API key required");
-    }
-    return refineImagePrompt(this.llm, userMessage);
+  /** Strip Гоша / draw verbs; use the subject verbatim (no LLM enhance). */
+  makeImagePrompt(userMessage: string): string {
+    return extractImagePrompt(userMessage);
   }
 }
 

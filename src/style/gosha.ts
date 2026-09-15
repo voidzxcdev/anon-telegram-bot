@@ -67,7 +67,7 @@ function startThinkingAnimation(
 
 /**
  * When a message contains "Гоша", reply once in the shared learned style.
- * Image requests -> English FLUX prompt via LLM, then Cloudflare Workers AI.
+ * Image requests -> subject as-is (no LLM enhance), then Cloudflare Workers AI.
  */
 export async function handleGoshaMention(
   ctx: Context,
@@ -91,7 +91,7 @@ export async function handleGoshaMention(
 
   try {
     if (isImage) {
-      const prompt = await speaker.makeImagePrompt(sourceText);
+      const prompt = speaker.makeImagePrompt(sourceText);
       console.log(`Cloudflare FLUX prompt: ${prompt}`);
       const image = await generateCloudflareFluxImage(prompt);
       stopThinking();

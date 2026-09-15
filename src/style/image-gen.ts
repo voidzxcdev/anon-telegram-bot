@@ -1,8 +1,10 @@
-import type { LlmClient } from "../llm/types.js";
-
 /** Detect "draw / generate an image" requests (RU + EN). */
 const IMAGE_REQUEST_RE =
   /(?:нарисуй(?:те)?|сгенерируй(?:те)?|сгенерир\w*|сделай(?:те)?\s+(?:мне\s+)?(?:картинк\w*|изображен\w*|арт|рисунок|фото|pic)|создай(?:те)?\s+(?:мне\s+)?(?:картинк\w*|изображен\w*|арт|рисунок)|generate(?:\s+me)?(?:\s+an?)?\s+image|draw(?:\s+me)?|create(?:\s+me)?(?:\s+an?)?\s+image|make(?:\s+me)?(?:\s+an?)?\s+(?:image|picture)|picture\s+of|art\s+of|image\s+of)/iu;
+
+/** Strip Гоша / gosha callouts so they never become image subjects. */
+const GOSHA_STRIP_RE =
+  /(?<!\p{L})(?:гошанчик(?:а|у|е|ом|ов|ами|ах)?|гошик(?:а|у|е|ом|ов|ами|ах)?|гош(?:а|и|е|у|ей|ею|ью|ка|ки|ке|ку|кой|кою)?|gosha)(?!\p{L})/giu;
 
 /** Cloudflare Workers AI image model. */
 const CF_FLUX_MODEL = "@cf/black-forest-labs/flux-2-dev";
@@ -26,46 +28,34 @@ export function wantsImageGeneration(text: string | undefined): boolean {
   return Boolean(text && IMAGE_REQUEST_RE.test(text));
 }
 
-function cleanPrompt(raw: string): string {
-  return raw
-    .replace(/^["'`]+|["'`]+$/g, "")
-    .replace(/^prompt\s*:\s*/i, "")
+/**
+ * No LLM enhance — strip trigger words and use the user's subject as-is.
+ * "гошанчик сгенерируй арбуз" → "арбуз"
+ */
+export function extractImagePrompt(userText: string): string {
+  let prompt = userText
+    .replace(GOSHA_STRIP_RE, " ")
+    .replace(IMAGE_REQUEST_RE, " ")
+    .replace(
+      /(?:пожалуйста|плиз|pls|please|мне|для\s+меня|картинк\w*|изображен\w*|рисунок|фото|арт|pic|image|picture|photo)/giu,
+      " ",
+    )
+    .replace(/[^\p{L}\p{N}\s.,!?+\-_/]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
-}
 
-/**
- * Translate / improve user request into one English FLUX prompt.
- */
-export async function refineImagePrompt(
-  llm: LlmClient,
-  userText: string,
-): Promise<string> {
-  const out = await llm.complete(
-    [
-      {
-        role: "system",
-        content:
-          "You write image prompts for FLUX.2 [dev] (Cloudflare Workers AI).\n" +
-          "Output ONLY one English prompt. No quotes, no markdown, no explanations.\n" +
-          "If the user wrote Russian or another language, translate to clear natural English.\n" +
-          "Keep the user's subject and vibe. Add light quality cues only if helpful.\n" +
-          "Do NOT invent random trash details, watermarks, logos, or unrelated objects.\n" +
-          "Max about 40 words. Use ASCII hyphen - only, never em-dashes.",
-      },
-      {
-        role: "user",
-        content: `User image request:\n${userText}`,
-      },
-    ],
-    { maxTokens: 120 },
-  );
-
-  const prompt = cleanPrompt(out);
   if (!prompt) {
-    throw new Error("empty image prompt from LLM");
+    throw new Error("empty image prompt after stripping triggers");
   }
   return prompt.slice(0, 800);
+}
+
+/** @deprecated use extractImagePrompt — kept name for callers during transition */
+export async function refineImagePrompt(
+  _llm: unknown,
+  userText: string,
+): Promise<string> {
+  return extractImagePrompt(userText);
 }
 
 export type GeneratedImage = {
