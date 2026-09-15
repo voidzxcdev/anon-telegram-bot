@@ -1,6 +1,6 @@
 import { createBot } from "./bot.js";
 import { loadEnv } from "./env.js";
-import { createLlmClient } from "./llm/client.js";
+import { createLlmClient, parseOpenRouterKeys } from "./llm/client.js";
 import { registerWebhook, startWebhookServer } from "./server.js";
 import { createTwinLearners } from "./style/learners.js";
 
@@ -9,8 +9,20 @@ const TRAIN_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
 async function main(): Promise<void> {
   const env = loadEnv();
 
-  // Keyless Pollinations LLM - no API keys.
-  const llm = createLlmClient();
+  const openRouterKeys = parseOpenRouterKeys(
+    env.OPENROUTER_API_KEYS ?? env.OPENROUTER_API_KEY,
+  );
+  if (openRouterKeys.length === 0) {
+    throw new Error(
+      "Set OPENROUTER_API_KEYS (comma-separated) or OPENROUTER_API_KEY",
+    );
+  }
+
+  const llm = createLlmClient({
+    apiKeys: openRouterKeys,
+    ...(env.OPENROUTER_MODEL ? { model: env.OPENROUTER_MODEL } : {}),
+    ...(env.publicBaseUrl ? { siteUrl: env.publicBaseUrl } : {}),
+  });
 
   // Both persona bots share one StyleStore — /m or /с on this Telegram bot trains both.
   const twins = createTwinLearners(llm);
@@ -23,7 +35,9 @@ async function main(): Promise<void> {
     `style corpus: ${sampleCount} samples (30d); profile=${Boolean(twins.alpha.getProfile())}`,
   );
 
-  console.log(`LLM ready: ${llm.model} (keyless multi-provider)`);
+  console.log(
+    `LLM ready: ${llm.model} (${openRouterKeys.length} OpenRouter key(s))`,
+  );
   const runTrain = async (reason: string) => {
     try {
       const profile = await twins.alpha.learnFromSharedCorpus();
