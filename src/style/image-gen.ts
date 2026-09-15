@@ -4,11 +4,14 @@ import type { LlmClient } from "../llm/types.js";
 const IMAGE_REQUEST_RE =
   /(?:нарисуй(?:те)?|сгенерируй(?:те)?|сгенерир\w*|сделай(?:те)?\s+(?:мне\s+)?(?:картинк\w*|изображен\w*|арт|рисунок|фото|pic)|создай(?:те)?\s+(?:мне\s+)?(?:картинк\w*|изображен\w*|арт|рисунок)|generate(?:\s+me)?(?:\s+an?)?\s+image|draw(?:\s+me)?|create(?:\s+me)?(?:\s+an?)?\s+image|make(?:\s+me)?(?:\s+an?)?\s+(?:image|picture)|picture\s+of|art\s+of|image\s+of)/iu;
 
-const CF_FLUX_MODEL = "@cf/black-forest-labs/flux-1-schnell";
+/** Cloudflare Workers AI image model. */
+const CF_FLUX_MODEL = "@cf/black-forest-labs/flux-2-dev";
 
 export type CloudflareImageConfig = {
   accountId: string;
   apiToken: string;
+  /** Optional Workers proxy URL (Bearer = CLOUDFLARE_API_TOKEN). */
+  gatewayUrl?: string;
 };
 
 let cloudflareConfig: CloudflareImageConfig | undefined;
@@ -43,10 +46,10 @@ export async function refineImagePrompt(
       {
         role: "system",
         content:
-          "You write image prompts for FLUX.1-schnell (Cloudflare Workers AI).\n" +
+          "You write image prompts for FLUX.2 [dev] (Cloudflare Workers AI).\n" +
           "Output ONLY one English prompt. No quotes, no markdown, no explanations.\n" +
           "If the user wrote Russian or another language, translate to clear natural English.\n" +
-          "Keep the user's subject and vibe. Add light quality cues (lighting, composition) only if helpful.\n" +
+          "Keep the user's subject and vibe. Add light quality cues only if helpful.\n" +
           "Do NOT invent random trash details, watermarks, logos, or unrelated objects.\n" +
           "Max about 40 words. Use ASCII hyphen - only, never em-dashes.",
       },
@@ -71,7 +74,7 @@ export type GeneratedImage = {
 };
 
 /**
- * Cloudflare Workers AI — FLUX.1-schnell (free Neurons daily).
+ * Cloudflare Workers AI — FLUX.2 [dev] (multipart form required).
  */
 export async function generateCloudflareFluxImage(
   prompt: string,
@@ -82,24 +85,29 @@ export async function generateCloudflareFluxImage(
     );
   }
 
-  const url = `https://api.cloudflare.com/client/v4/accounts/${cloudflareConfig.accountId}/ai/run/${CF_FLUX_MODEL}`;
+  const url =
+    cloudflareConfig.gatewayUrl?.replace(/\/$/, "") ||
+    `https://api.cloudflare.com/client/v4/accounts/${cloudflareConfig.accountId}/ai/run/${CF_FLUX_MODEL}`;
+
+  const form = new FormData();
+  form.append("prompt", prompt);
+  form.append("width", "1024");
+  form.append("height", "1024");
+  form.append("steps", "20");
+  form.append("seed", String(Math.floor(Math.random() * 1_000_000_000)));
+
   const res = await fetch(url, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${cloudflareConfig.apiToken}`,
-      "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      prompt,
-      steps: 4,
-      seed: Math.floor(Math.random() * 1_000_000_000),
-    }),
-    signal: AbortSignal.timeout(120_000),
+    body: form,
+    signal: AbortSignal.timeout(180_000),
   });
 
   const raw = await res.text();
   if (!res.ok) {
-    throw new Error(`Cloudflare AI HTTP ${res.status}: ${raw.slice(0, 200)}`);
+    throw new Error(`Cloudflare AI HTTP ${res.status}: ${raw.slice(0, 220)}`);
   }
 
   let imageB64 = "";

@@ -35,8 +35,11 @@ async function main(): Promise<void> {
     setCloudflareImageConfig({
       accountId: env.CLOUDFLARE_ACCOUNT_ID,
       apiToken: env.CLOUDFLARE_API_TOKEN,
+      ...(env.CLOUDFLARE_AI_GATEWAY_URL
+        ? { gatewayUrl: env.CLOUDFLARE_AI_GATEWAY_URL }
+        : {}),
     });
-    console.log("image gen: Cloudflare Workers AI FLUX.1-schnell");
+    console.log("image gen: Cloudflare Workers AI FLUX.2-dev");
   } else {
     console.warn(
       "CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN missing — image gen disabled",

@@ -24,9 +24,11 @@ const envSchema = z.object({
   GROQ_API_KEY: z.string().min(1).optional(),
   /** Google AI Studio - https://aistudio.google.com/apikey */
   GEMINI_API_KEY: z.string().min(1).optional(),
-  /** Cloudflare Workers AI (FLUX images) - account id + API token. */
+  /** Cloudflare Workers AI (FLUX.2-dev) - account id + API token / proxy secret. */
   CLOUDFLARE_ACCOUNT_ID: z.string().min(1).optional(),
   CLOUDFLARE_API_TOKEN: z.string().min(1).optional(),
+  /** Optional Workers AI proxy (gosha-flux). When set, Bearer uses CLOUDFLARE_API_TOKEN. */
+  CLOUDFLARE_AI_GATEWAY_URL: z.string().url().optional(),
 });
 
 export type Env = z.infer<typeof envSchema> & {
