@@ -44,13 +44,11 @@ export async function handleGoshaMention(
     );
   } catch (error) {
     console.error("Гоша reply failed", error);
-    const detail =
-      error instanceof Error ? error.message.slice(0, 220) : "error";
     try {
       await ctx.api.editMessageText(
         status.chat.id,
         status.message_id,
-        `Не смог ответить: ${detail}`,
+        "Не смог ответить сорри",
       );
     } catch {
       // ignore edit failures

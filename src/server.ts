@@ -60,7 +60,37 @@ export async function registerWebhook(bot: Bot, env: Env): Promise<string> {
   const url = `${env.publicBaseUrl.replace(/\/$/, "")}${webhookPath(env.WEBHOOK_SECRET)}`;
   await bot.api.setWebhook(url, {
     allowed_updates: ["message"],
-    drop_pending_updates: true,
+    // Never drop pending on boot - free Render cold starts otherwise eat group /m updates.
+    drop_pending_updates: false,
   });
   return url;
+}
+
+/**
+ * Ping /health so free Render does not sleep after 15m idle.
+ * Without this, the first group /m after idle often fails until a DM wakes the service.
+ */
+export function startKeepAlive(publicBaseUrl: string): void {
+  const healthUrl = `${publicBaseUrl.replace(/\/$/, "")}/health`;
+  const intervalMs = 10 * 60 * 1000;
+
+  const ping = async () => {
+    try {
+      const res = await fetch(healthUrl, {
+        method: "GET",
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) {
+        console.warn(`keep-alive ${res.status} from ${healthUrl}`);
+      }
+    } catch (error) {
+      console.warn("keep-alive failed", error);
+    }
+  };
+
+  console.log(`keep-alive every 10m -> ${healthUrl}`);
+  void ping();
+  setInterval(() => {
+    void ping();
+  }, intervalMs);
 }

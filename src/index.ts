@@ -1,7 +1,7 @@
 import { createBot } from "./bot.js";
 import { loadEnv } from "./env.js";
 import { createLlmClient, parseOpenRouterKeys } from "./llm/client.js";
-import { registerWebhook, startWebhookServer } from "./server.js";
+import { registerWebhook, startKeepAlive, startWebhookServer } from "./server.js";
 import { createTwinLearners } from "./style/learners.js";
 
 const TRAIN_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
@@ -96,6 +96,7 @@ async function main(): Promise<void> {
     try {
       const webhookUrl = await registerWebhook(bot, env);
       console.log(`webhook set: ${webhookUrl}`);
+      startKeepAlive(env.publicBaseUrl);
     } catch (error) {
       console.error("setWebhook failed", error);
     }
