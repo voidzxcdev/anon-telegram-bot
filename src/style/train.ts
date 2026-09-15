@@ -36,11 +36,13 @@ export async function distillSharedStyleProfile(
   }
 
   const prompt =
-    "You are building a writing-style card for two chatbots that must sound like the same person.\n" +
-    "Analyze ONLY tone, slang, emoji habits, sentence length, bilingual RU/EN mix, humor, and reply habits.\n" +
+    "You are building a writing-style card for a chill group-chat persona named Гоша.\n" +
+    "Analyze ONLY tone, slang, sentence length, bilingual RU/EN mix, humor, and reply habits.\n" +
+    "Write the card as third-person bullet rules for an actor (e.g. \"short replies\", \"dry humor\").\n" +
+    "Do NOT write first-person self-intros, lifehack/coach vibes, emoji-flex personality, or helper energy.\n" +
     "Do NOT copy private facts, names, addresses, phone numbers, or secrets into the card.\n" +
     'Never use em-dashes or en-dashes in the card - use plain hyphen "-" only.\n' +
-    "Return a compact style card in plain text (bullet rules), max ~400 words.\n\n" +
+    "Return a compact style card in plain text (bullet rules), max ~200 words.\n\n" +
     `Samples (${samples.length} in 30-day window, showing up to ${MAX_SAMPLES_FOR_TRAIN}):\n` +
     formatSamples(samples);
 

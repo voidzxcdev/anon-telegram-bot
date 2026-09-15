@@ -80,7 +80,7 @@ export class PersonaBot {
       {
         role: "user",
         content:
-          "The user mentioned Гоша in this message. Reply as the AI persona.\n\n" +
+          "Someone mentioned you (Гоша) in this chat message. Answer as Гоша with one short normal message. No intro, no @names, no lifehacks.\n\n" +
           userMessage,
       },
     ]);
