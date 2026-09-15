@@ -13,6 +13,9 @@ const GOSHA_RE =
 /** Hard cap - models love essays; keep Гоша chat-sized. */
 const MAX_REPLY = 160;
 
+const THINKING_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
+const THINKING_TICK_MS = 180;
+
 export function mentionsGosha(text: string | undefined): boolean {
   if (!text) return false;
   GOSHA_RE.lastIndex = 0;
@@ -23,6 +26,33 @@ function truncate(text: string): string {
   const cleaned = text.trim();
   if (cleaned.length <= MAX_REPLY) return cleaned;
   return `${cleaned.slice(0, MAX_REPLY - 1).trimEnd()}…`;
+}
+
+function startThinkingAnimation(
+  edit: (text: string) => Promise<void>,
+): () => void {
+  let frame = 0;
+  let stopped = false;
+  let inFlight = false;
+
+  const timer = setInterval(() => {
+    if (stopped || inFlight) return;
+    frame = (frame + 1) % THINKING_FRAMES.length;
+    const text = THINKING_FRAMES[frame]!;
+    inFlight = true;
+    void edit(text)
+      .catch(() => {
+        // ignore flood / unchanged / deleted
+      })
+      .finally(() => {
+        inFlight = false;
+      });
+  }, THINKING_TICK_MS);
+
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+  };
 }
 
 /**
@@ -37,7 +67,13 @@ export async function handleGoshaMention(
     return;
   }
 
-  const status = await ctx.reply("...");
+  const status = await ctx.reply(THINKING_FRAMES[0]!);
+  const chatId = status.chat.id;
+  const messageId = status.message_id;
+
+  const stopThinking = startThinkingAnimation(async (text) => {
+    await ctx.api.editMessageText(chatId, messageId, text);
+  });
 
   try {
     await speaker.loadSharedProfile();
@@ -53,17 +89,15 @@ export async function handleGoshaMention(
         : (from?.first_name ?? "someone");
 
     const answer = await speaker.speakAsGosha(sourceText, card, who);
-    await ctx.api.editMessageText(
-      status.chat.id,
-      status.message_id,
-      truncate(answer),
-    );
+    stopThinking();
+    await ctx.api.editMessageText(chatId, messageId, truncate(answer));
   } catch (error) {
     console.error("Гоша reply failed", error);
+    stopThinking();
     try {
       await ctx.api.editMessageText(
-        status.chat.id,
-        status.message_id,
+        chatId,
+        messageId,
         "Не смог ответить сорри",
       );
     } catch {
