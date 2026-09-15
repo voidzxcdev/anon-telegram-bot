@@ -106,12 +106,12 @@ export async function generateCloudflareFluxImage(
       return await generateViaCloudflare(prompt);
     } catch (error) {
       cfError = error;
-      const detail = error instanceof Error ? error.message : String(error);
-      if (!hasGemini || !isNeuronExhausted(detail)) {
+      if (!hasGemini) {
         throw error;
       }
+      const detail = error instanceof Error ? error.message : String(error);
       console.warn(
-        "Cloudflare Neurons exhausted — falling back to Gemini image",
+        `Cloudflare image failed (${isNeuronExhausted(detail) ? "neurons" : "error"}) — falling back to Gemini`,
       );
     }
   }
