@@ -3,7 +3,8 @@ export interface Env {
   PROXY_SECRET: string;
 }
 
-const MODEL = "@cf/black-forest-labs/flux-2-dev";
+/** Free Workers AI model — stays within 10k Neurons/day. */
+const MODEL = "@cf/black-forest-labs/flux-1-schnell";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -23,33 +24,32 @@ export default {
       );
     }
 
-    const contentType = request.headers.get("content-type") || "";
-    if (!contentType.includes("multipart/form-data") || !request.body) {
-      return Response.json(
-        {
-          success: false,
-          errors: [{ message: "multipart/form-data body required" }],
-        },
-        { status: 400 },
-      );
-    }
-
     try {
-      // Forward raw multipart stream — FLUX.2-dev requires multipart input.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await (env.AI as any).run(MODEL, {
-        multipart: {
-          body: request.body,
-          contentType,
-        },
+      const body = (await request.json()) as {
+        prompt?: string;
+        num_steps?: number;
+      };
+      const prompt = String(body.prompt || "").trim();
+      if (!prompt) {
+        return Response.json(
+          { success: false, errors: [{ message: "prompt required" }] },
+          { status: 400 },
+        );
+      }
+
+      const result = await env.AI.run(MODEL, {
+        prompt,
+        num_steps: Math.min(Math.max(Number(body.num_steps) || 4, 1), 8),
       });
 
       return Response.json({ success: true, result });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const status =
+        /4006|neurons|daily free allocation/i.test(message) ? 429 : 500;
       return Response.json(
         { success: false, errors: [{ message }] },
-        { status: 500 },
+        { status },
       );
     }
   },

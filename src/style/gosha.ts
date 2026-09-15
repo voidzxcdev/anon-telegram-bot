@@ -5,6 +5,7 @@ import { DASH_RULE } from "../llm/types.js";
 import { sleep } from "../llm/types.js";
 import {
   generateCloudflareFluxImage,
+  ImageGenError,
   wantsImageGeneration,
 } from "./image-gen.js";
 import type { PersonaBot } from "./learners.js";
@@ -160,15 +161,15 @@ export async function handleGoshaMention(
   } catch (error) {
     console.error("Гоша reply failed", error);
     stopPulse();
+    const sorry =
+      error instanceof ImageGenError
+        ? error.userMessage
+        : "Не смог ответить сорри";
     try {
-      await ctx.api.editMessageText(
-        chatId,
-        messageId,
-        "Не смог ответить сорри",
-      );
+      await ctx.api.editMessageText(chatId, messageId, sorry);
     } catch {
       try {
-        await ctx.api.sendMessage(chatId, "Не смог ответить сорри");
+        await ctx.api.sendMessage(chatId, sorry);
       } catch {
         // ignore
       }

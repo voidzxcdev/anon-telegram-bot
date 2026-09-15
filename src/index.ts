@@ -39,7 +39,7 @@ async function main(): Promise<void> {
         ? { gatewayUrl: env.CLOUDFLARE_AI_GATEWAY_URL }
         : {}),
     });
-    console.log("image gen: Cloudflare Workers AI FLUX.2-dev");
+    console.log("image gen: Cloudflare Workers AI FLUX.1-schnell");
   } else {
     console.warn(
       "CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN missing — image gen disabled",
