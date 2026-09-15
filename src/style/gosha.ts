@@ -72,7 +72,7 @@ async function withTelegramRetry<T>(
  * Does not edit any message — safe for long FLUX runs.
  */
 function startChatActionPulse(
-  sendAction: () => Promise<void>,
+  sendAction: () => Promise<unknown>,
 ): () => void {
   let stopped = false;
 
