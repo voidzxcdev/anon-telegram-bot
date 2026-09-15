@@ -3,12 +3,20 @@ import type { Context } from "grammy";
 import { DASH_RULE } from "../llm/types.js";
 import type { PersonaBot } from "./learners.js";
 
-const GOSHA_RE = /гоша/i;
+/**
+ * Matches Гоша in common Russian cases + short/diminutive forms + Latin "gosha".
+ * Case-insensitive (гоша / ГОША / Гошу / гоше / гош …).
+ */
+const GOSHA_RE =
+  /(?<!\p{L})(?:гош(?:а|и|е|у|ей|ею|ью|ка|ки|ке|ку|кой|кою)?|gosha)(?!\p{L})/iu;
+
 /** Hard cap - models love essays; keep Гоша chat-sized. */
 const MAX_REPLY = 160;
 
 export function mentionsGosha(text: string | undefined): boolean {
-  return Boolean(text && GOSHA_RE.test(text));
+  if (!text) return false;
+  GOSHA_RE.lastIndex = 0;
+  return GOSHA_RE.test(text);
 }
 
 function truncate(text: string): string {

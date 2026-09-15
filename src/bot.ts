@@ -33,7 +33,7 @@ export function createBot(token: string, deps: BotDeps = {}): Bot {
         "- Put the command in a media caption\n" +
         "- Reply to any message, then use /m or /с\n" +
         "- In groups, make me admin with Delete messages so I can remove yours\n" +
-        '- Say Гоша once to get a single AI reply in your learned style\n\n' +
+        "- Say Гоша / Гошу / Гоше / гош / gosha (any case) for one AI reply\n\n" +
         "Style learning: every /m and /с feeds one shared corpus for both persona bots.",
     );
   });
