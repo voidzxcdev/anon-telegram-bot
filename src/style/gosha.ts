@@ -1,5 +1,5 @@
 import type { Context } from "grammy";
-import { InputFile } from "grammy";
+import { GrammyError, InputFile } from "grammy";
 
 import { DASH_RULE } from "../llm/types.js";
 import { sleep } from "../llm/types.js";
@@ -20,7 +20,8 @@ const GOSHA_RE =
 const MAX_REPLY = 160;
 
 const THINKING_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
-const THINKING_TICK_MS = 120;
+/** Keep under Telegram edit rate limits (~1/s). Fast ticks kill sendPhoto after long FLUX. */
+const THINKING_TICK_MS = 1_800;
 
 export function mentionsGosha(text: string | undefined): boolean {
   if (!text) return false;
@@ -32,6 +33,37 @@ function truncate(text: string): string {
   const cleaned = text.trim();
   if (cleaned.length <= MAX_REPLY) return cleaned;
   return `${cleaned.slice(0, MAX_REPLY - 1).trimEnd()}…`;
+}
+
+function retryAfterMs(error: unknown): number | undefined {
+  if (!(error instanceof GrammyError) || error.error_code !== 429) {
+    return undefined;
+  }
+  const params = error.parameters as { retry_after?: number } | undefined;
+  const sec = params?.retry_after;
+  return typeof sec === "number" && sec > 0 ? sec * 1000 : 2_000;
+}
+
+async function withTelegramRetry<T>(
+  label: string,
+  fn: () => Promise<T>,
+  attempts = 4,
+): Promise<T> {
+  let last: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      last = error;
+      const wait = retryAfterMs(error);
+      if (wait == null || i === attempts - 1) {
+        throw error;
+      }
+      console.warn(`${label} 429, retry in ${wait}ms`);
+      await sleep(wait);
+    }
+  }
+  throw last;
 }
 
 /**
@@ -95,15 +127,19 @@ export async function handleGoshaMention(
       console.log(`Cloudflare FLUX prompt: ${prompt}`);
       const image = await generateCloudflareFluxImage(prompt);
       stopThinking();
+      // Let in-flight spinner edits settle so sendPhoto is not rate-limited.
+      await sleep(600);
+
+      await withTelegramRetry("sendPhoto", () =>
+        ctx.api.sendPhoto(chatId, new InputFile(image.bytes, "gosha.jpg")),
+      );
+
+      // Delete status only after the photo is actually delivered.
       try {
         await ctx.api.deleteMessage(chatId, messageId);
       } catch {
         // ignore
       }
-      await ctx.api.sendPhoto(
-        chatId,
-        new InputFile(image.bytes, "gosha.jpg"),
-      );
       return;
     }
 
@@ -121,7 +157,9 @@ export async function handleGoshaMention(
 
     const answer = await speaker.speakAsGosha(sourceText, card, who);
     stopThinking();
-    await ctx.api.editMessageText(chatId, messageId, truncate(answer));
+    await withTelegramRetry("editReply", () =>
+      ctx.api.editMessageText(chatId, messageId, truncate(answer)),
+    );
   } catch (error) {
     console.error("Гоша reply failed", error);
     stopThinking();
@@ -132,7 +170,11 @@ export async function handleGoshaMention(
         "Не смог ответить сорри",
       );
     } catch {
-      // ignore edit failures
+      try {
+        await ctx.api.sendMessage(chatId, "Не смог ответить сорри");
+      } catch {
+        // ignore
+      }
     }
   }
 }
