@@ -14,13 +14,16 @@ const envSchema = z.object({
   /** Use long polling locally when no public URL is available. */
   NODE_ENV: z.enum(["development", "production", "test"]).default("production"),
   /**
-   * OpenRouter API keys (comma-separated). Rotate across accounts to raise
-   * free-model rate limits. Alias: OPENROUTER_API_KEY (single key).
+   * OpenRouter API keys (comma-separated). Alias: OPENROUTER_API_KEY.
    */
   OPENROUTER_API_KEYS: z.string().min(1).optional(),
   OPENROUTER_API_KEY: z.string().min(1).optional(),
-  /** Override model id (default: poolside/laguna-s-2.1:free). */
+  /** Override primary OpenRouter model. */
   OPENROUTER_MODEL: z.string().min(1).optional(),
+  /** Groq Cloud - https://console.groq.com/keys (GPT-OSS free). */
+  GROQ_API_KEY: z.string().min(1).optional(),
+  /** Google AI Studio - https://aistudio.google.com/apikey */
+  GEMINI_API_KEY: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof envSchema> & {

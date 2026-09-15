@@ -6,31 +6,46 @@ import {
   type LlmClient,
 } from "./types.js";
 
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+type ChatTarget = {
+  label: string;
+  url: string;
+  model: string;
+  apiKey: string;
+  /** Extra JSON body fields (OpenRouter provider prefs, etc.). */
+  extraBody?: Record<string, unknown>;
+  headers?: Record<string, string>;
+};
 
-/** Primary + free fallbacks when Laguna is blocked / rate-limited. */
-const DEFAULT_MODELS = [
+const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+const GEMINI_URL =
+  "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+
+const OPENROUTER_FREE_MODELS = [
   "poolside/laguna-s-2.1:free",
   "poolside/laguna-xs-2.1:free",
   "nex-agi/nex-n2.5-mini:free",
   "liquid/lfm-2.5-2.6b:free",
 ] as const;
 
-/** Skip a key for a while after privacy/config errors (won't magically work next try). */
-const BAD_KEY_COOLDOWN_MS = 30 * 60 * 1000;
+/** Groq free-tier GPT-OSS (fast). */
+const GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"] as const;
+
+/** Gemini free AI Studio models. */
+const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"] as const;
+
+const BAD_TARGET_COOLDOWN_MS = 30 * 60 * 1000;
 
 export type LlmProviderConfig = {
-  /** One or more OpenRouter API keys (rotated on rate limits). */
-  apiKeys: string[];
-  /** Primary model; fallbacks still tried if this fails. */
-  model?: string;
-  models?: readonly string[];
-  /** Optional app attribution for OpenRouter rankings. */
+  openRouterKeys?: string[];
+  openRouterModel?: string;
+  groqApiKey?: string;
+  geminiApiKey?: string;
   siteUrl?: string;
   appName?: string;
 };
 
-function parseOpenRouterError(raw: string): string {
+function parseApiError(raw: string): string {
   try {
     const json = JSON.parse(raw) as {
       error?: { message?: string } | string;
@@ -47,94 +62,140 @@ function parseOpenRouterError(raw: string): string {
   return raw.slice(0, 220);
 }
 
-function isPrivacyOrProviderConfigError(message: string): boolean {
-  return /guardrail|data policy|training violation|allowed-providers|allowed providers|settings\/privacy/i.test(
+function isConfigBlockError(message: string): boolean {
+  return /guardrail|data policy|training violation|allowed-providers|allowed providers|settings\/privacy|API_KEY_INVALID|invalid.?api.?key|incorrect api key/i.test(
     message,
   );
 }
 
-/**
- * OpenRouter client: rotate keys + free model fallbacks.
- * Tip: each account must allow free / Poolside at https://openrouter.ai/settings/privacy
- */
-export function createLlmClient(config: LlmProviderConfig): LlmClient {
-  const keys = config.apiKeys.map((k) => k.trim()).filter(Boolean);
-  if (keys.length === 0) {
-    throw new Error("OPENROUTER_API_KEYS is required (comma-separated)");
+function buildTargets(config: LlmProviderConfig): ChatTarget[] {
+  const targets: ChatTarget[] = [];
+  const site =
+    config.siteUrl ?? "https://github.com/voidzxcdev/anon-telegram-bot";
+  const app = config.appName ?? "anon-telegram-bot";
+
+  if (config.groqApiKey) {
+    for (const model of GROQ_MODELS) {
+      targets.push({
+        label: `groq/${model}`,
+        url: GROQ_URL,
+        model,
+        apiKey: config.groqApiKey,
+      });
+    }
   }
 
-  const models = [
-    ...(config.model ? [config.model] : []),
-    ...(config.models ?? DEFAULT_MODELS),
+  if (config.geminiApiKey) {
+    for (const model of GEMINI_MODELS) {
+      targets.push({
+        label: `gemini/${model}`,
+        url: GEMINI_URL,
+        model,
+        apiKey: config.geminiApiKey,
+      });
+    }
+  }
+
+  const orKeys = (config.openRouterKeys ?? []).map((k) => k.trim()).filter(Boolean);
+  const orModels = [
+    ...(config.openRouterModel ? [config.openRouterModel] : []),
+    ...OPENROUTER_FREE_MODELS,
   ].filter((m, i, arr) => arr.indexOf(m) === i);
 
-  let keyIndex = 0;
-  let lastModel = `openrouter/${models[0]}`;
-  /** key index -> cooldown until */
-  const badUntil = new Map<number, number>();
-
-  async function completeOnce(
-    apiKey: string,
-    keyLabel: string,
-    model: string,
-    messages: ChatMessage[],
-  ): Promise<string> {
-    const res = await fetch(OPENROUTER_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        "HTTP-Referer":
-          config.siteUrl ?? "https://github.com/voidzxcdev/anon-telegram-bot",
-        "X-Title": config.appName ?? "anon-telegram-bot",
-      },
-      body: JSON.stringify({
+  for (let ki = 0; ki < orKeys.length; ki++) {
+    const apiKey = orKeys[ki]!;
+    for (const model of orModels) {
+      targets.push({
+        label: `openrouter-key${ki + 1}/${model}`,
+        url: OPENROUTER_URL,
         model,
-        messages: messages.map((m) => ({ role: m.role, content: m.content })),
-        // Prefer free endpoints that may train; still overridden by strict account privacy.
-        provider: {
-          data_collection: "allow",
-          allow_fallbacks: true,
+        apiKey,
+        headers: {
+          "HTTP-Referer": site,
+          "X-Title": app,
         },
-      }),
-    });
-
-    const raw = await res.text();
-    if (!res.ok) {
-      const err = new Error(
-        `${keyLabel}/${model} HTTP ${res.status}: ${parseOpenRouterError(raw)}`,
-      );
-      (err as { status?: number }).status = res.status;
-      throw err;
+        extraBody: {
+          provider: {
+            data_collection: "allow",
+            allow_fallbacks: true,
+          },
+        },
+      });
     }
-
-    let content = "";
-    try {
-      const json = JSON.parse(raw) as {
-        choices?: Array<{ message?: { content?: string | null } }>;
-        error?: { message?: string } | string;
-      };
-      if (json.error) {
-        const msg =
-          typeof json.error === "string"
-            ? json.error
-            : (json.error.message ?? JSON.stringify(json.error));
-        throw new Error(`${keyLabel}/${model}: ${msg}`);
-      }
-      content = json.choices?.[0]?.message?.content?.trim() ?? "";
-    } catch (error) {
-      if (error instanceof SyntaxError) {
-        throw new Error(`${keyLabel} invalid JSON: ${raw.slice(0, 160)}`);
-      }
-      throw error;
-    }
-
-    if (!content) {
-      throw new Error(`${keyLabel}/${model} returned empty completion`);
-    }
-    return normalizeDashes(content);
   }
+
+  return targets;
+}
+
+async function completeOnce(
+  target: ChatTarget,
+  messages: ChatMessage[],
+): Promise<string> {
+  const res = await fetch(target.url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${target.apiKey}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      ...target.headers,
+    },
+    body: JSON.stringify({
+      model: target.model,
+      messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      ...target.extraBody,
+    }),
+  });
+
+  const raw = await res.text();
+  if (!res.ok) {
+    const err = new Error(
+      `${target.label} HTTP ${res.status}: ${parseApiError(raw)}`,
+    );
+    (err as { status?: number }).status = res.status;
+    throw err;
+  }
+
+  let content = "";
+  try {
+    const json = JSON.parse(raw) as {
+      choices?: Array<{ message?: { content?: string | null } }>;
+      error?: { message?: string } | string;
+    };
+    if (json.error) {
+      const msg =
+        typeof json.error === "string"
+          ? json.error
+          : (json.error.message ?? JSON.stringify(json.error));
+      throw new Error(`${target.label}: ${msg}`);
+    }
+    content = json.choices?.[0]?.message?.content?.trim() ?? "";
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error(`${target.label} invalid JSON: ${raw.slice(0, 160)}`);
+    }
+    throw error;
+  }
+
+  if (!content) {
+    throw new Error(`${target.label} returned empty completion`);
+  }
+  return normalizeDashes(content);
+}
+
+/**
+ * Multi-provider free LLM: Groq GPT-OSS → Gemini Flash → OpenRouter free.
+ */
+export function createLlmClient(config: LlmProviderConfig): LlmClient {
+  const targets = buildTargets(config);
+  if (targets.length === 0) {
+    throw new Error(
+      "Configure at least one of GROQ_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEYS",
+    );
+  }
+
+  let cursor = 0;
+  let lastModel = targets[0]!.label;
+  const badUntil = new Map<string, number>();
 
   return {
     get model() {
@@ -142,49 +203,49 @@ export function createLlmClient(config: LlmProviderConfig): LlmClient {
     },
     async complete(messages: ChatMessage[]): Promise<string> {
       const now = Date.now();
-      const order: number[] = [];
-      for (let i = 0; i < keys.length; i++) {
-        const idx = (keyIndex + i) % keys.length;
-        const until = badUntil.get(idx) ?? 0;
-        if (until > now) continue;
-        order.push(idx);
-      }
-      // If every key is in privacy cooldown, try them anyway (settings may have changed).
-      if (order.length === 0) {
-        for (let i = 0; i < keys.length; i++) {
-          order.push((keyIndex + i) % keys.length);
-        }
-      }
+      const errors: string[] = [];
 
-      for (const model of models) {
-        for (const idx of order) {
-          const apiKey = keys[idx]!;
-          const keyLabel = `key${idx + 1}`;
-          try {
-            const text = await completeOnce(apiKey, keyLabel, model, messages);
-            keyIndex = (idx + 1) % keys.length;
-            badUntil.delete(idx);
-            lastModel = `openrouter/${model}`;
-            return text;
-          } catch (error) {
-            const detail =
-              error instanceof Error ? error.message : String(error);
-            console.warn(`LLM failed (${keyLabel}/${model}):`, detail);
-            if (isPrivacyOrProviderConfigError(detail)) {
-              badUntil.set(idx, Date.now() + BAD_KEY_COOLDOWN_MS);
-              console.warn(
-                `${keyLabel}: privacy/provider block - fix at https://openrouter.ai/settings/privacy (cooldown 30m)`,
-              );
-              break; // same key won't work for other free models either if providers locked
+      for (let i = 0; i < targets.length; i++) {
+        const idx = (cursor + i) % targets.length;
+        const target = targets[idx]!;
+        if ((badUntil.get(target.label) ?? 0) > now) continue;
+
+        try {
+          const text = await completeOnce(target, messages);
+          cursor = (idx + 1) % targets.length;
+          badUntil.delete(target.label);
+          lastModel = target.label;
+          if (i > 0) {
+            console.warn(`LLM fallback succeeded with ${target.label}`);
+          }
+          return text;
+        } catch (error) {
+          const detail =
+            error instanceof Error ? error.message : String(error);
+          errors.push(detail);
+          console.warn(`LLM failed (${target.label}):`, detail);
+          if (isConfigBlockError(detail)) {
+            badUntil.set(target.label, Date.now() + BAD_TARGET_COOLDOWN_MS);
+            // OpenRouter privacy blocks usually apply to the whole key.
+            const orKey = /^openrouter-(key\d+)\//.exec(target.label);
+            if (orKey) {
+              const prefix = `openrouter-${orKey[1]}/`;
+              for (const t of targets) {
+                if (t.label.startsWith(prefix)) {
+                  badUntil.set(t.label, Date.now() + BAD_TARGET_COOLDOWN_MS);
+                }
+              }
             }
-            if (isRateLimitError(error)) {
-              await sleep(300);
-            }
+          }
+          if (isRateLimitError(error)) {
+            await sleep(300);
           }
         }
       }
 
-      throw new Error("All OpenRouter keys/models failed");
+      throw new Error(
+        `All LLM providers failed (${targets.length} targets).`,
+      );
     },
   };
 }

@@ -12,15 +12,21 @@ async function main(): Promise<void> {
   const openRouterKeys = parseOpenRouterKeys(
     env.OPENROUTER_API_KEYS ?? env.OPENROUTER_API_KEY,
   );
-  if (openRouterKeys.length === 0) {
+  if (
+    openRouterKeys.length === 0 &&
+    !env.GROQ_API_KEY &&
+    !env.GEMINI_API_KEY
+  ) {
     throw new Error(
-      "Set OPENROUTER_API_KEYS (comma-separated) or OPENROUTER_API_KEY",
+      "Set GROQ_API_KEY and/or GEMINI_API_KEY and/or OPENROUTER_API_KEYS",
     );
   }
 
   const llm = createLlmClient({
-    apiKeys: openRouterKeys,
-    ...(env.OPENROUTER_MODEL ? { model: env.OPENROUTER_MODEL } : {}),
+    ...(openRouterKeys.length > 0 ? { openRouterKeys } : {}),
+    ...(env.OPENROUTER_MODEL ? { openRouterModel: env.OPENROUTER_MODEL } : {}),
+    ...(env.GROQ_API_KEY ? { groqApiKey: env.GROQ_API_KEY } : {}),
+    ...(env.GEMINI_API_KEY ? { geminiApiKey: env.GEMINI_API_KEY } : {}),
     ...(env.publicBaseUrl ? { siteUrl: env.publicBaseUrl } : {}),
   });
 
@@ -35,9 +41,12 @@ async function main(): Promise<void> {
     `style corpus: ${sampleCount} samples (30d); profile=${Boolean(twins.alpha.getProfile())}`,
   );
 
-  console.log(
-    `LLM ready: ${llm.model} (${openRouterKeys.length} OpenRouter key(s))`,
-  );
+  const providers = [
+    env.GROQ_API_KEY ? "groq" : null,
+    env.GEMINI_API_KEY ? "gemini" : null,
+    openRouterKeys.length > 0 ? `openrouter(${openRouterKeys.length})` : null,
+  ].filter(Boolean);
+  console.log(`LLM ready: ${llm.model} [${providers.join(" → ")}]`);
   const runTrain = async (reason: string) => {
     try {
       const profile = await twins.alpha.learnFromSharedCorpus();
