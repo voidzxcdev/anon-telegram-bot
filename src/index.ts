@@ -23,7 +23,7 @@ async function main(): Promise<void> {
     `style corpus: ${sampleCount} samples (30d); profile=${Boolean(twins.alpha.getProfile())}`,
   );
 
-  console.log(`LLM ready: ${llm.model} (Pollinations, keyless)`);
+  console.log(`LLM ready: ${llm.model} (keyless multi-provider)`);
   const runTrain = async (reason: string) => {
     try {
       const profile = await twins.alpha.learnFromSharedCorpus();

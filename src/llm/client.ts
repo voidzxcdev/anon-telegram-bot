@@ -1,5 +1,3 @@
-import OpenAI from "openai";
-
 import {
   isRateLimitError,
   normalizeDashes,
@@ -8,48 +6,125 @@ import {
   type LlmClient,
 } from "./types.js";
 
-/** Anonymous OpenAI-compatible endpoint - no API key required. */
-const POLLINATIONS_BASE = "https://text.pollinations.ai/openai";
-
-/**
- * Anonymous-tier aliases for the same GPT-OSS 20B backend.
- * Retries across aliases help when one route is briefly rate-limited.
- */
-const MODEL_IDS = ["openai-fast", "openai", "gpt-oss"] as const;
-
-export type LlmProviderConfig = {
-  /** Override Pollinations base URL (tests / self-host). */
-  baseURL?: string;
-  /** Override model id list. */
-  models?: readonly string[];
+type ProviderTarget = {
+  label: string;
+  url: string;
+  model: string;
+  /** Extra headers (never send a real API key). */
+  headers?: Record<string, string>;
 };
 
 /**
- * Keyless LLM via Pollinations anonymous tier (OpenAI chat completions shape).
+ * Keyless OpenAI-compatible providers (no signup / no API keys).
+ * Order: prefer stable anonymous gateways; Pollinations last because its
+ * OpenAI SDK path was routing agent UAs onto a budgeted shared key.
  */
-export function createLlmClient(config: LlmProviderConfig = {}): LlmClient {
-  const baseURL = config.baseURL ?? POLLINATIONS_BASE;
-  const models = config.models ?? MODEL_IDS;
+const DEFAULT_TARGETS: ProviderTarget[] = [
+  {
+    label: "llm7/mistral-nemo",
+    url: "https://api.llm7.io/v1/chat/completions",
+    model: "mistral-Nemo-Instruct-2407",
+  },
+  {
+    label: "kilo/auto-free",
+    url: "https://api.kilo.ai/api/gateway/chat/completions",
+    model: "kilo-auto/free",
+  },
+  {
+    label: "pollinations/openai-fast",
+    url: "https://text.pollinations.ai/openai",
+    model: "openai-fast",
+    headers: {
+      Referer: "https://pollinations.ai/",
+      Origin: "https://pollinations.ai",
+    },
+  },
+  {
+    label: "ovh/mistral-7b",
+    url: "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1/chat/completions",
+    model: "Mistral-7B-Instruct-v0.3",
+  },
+];
 
-  const client = new OpenAI({
-    apiKey: "anonymous",
-    baseURL,
+const BROWSER_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+export type LlmProviderConfig = {
+  targets?: ProviderTarget[];
+};
+
+function looksLikeProviderError(text: string): boolean {
+  return /API key used for this request|reached its budget|raise the key budget|enter\.pollinations|insufficient pollen|PAYMENT_REQUIRED|Get unlimited access at/i.test(
+    text,
+  );
+}
+
+async function completeWith(
+  target: ProviderTarget,
+  messages: ChatMessage[],
+): Promise<string> {
+  const res = await fetch(target.url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      "User-Agent": BROWSER_UA,
+      ...target.headers,
+    },
+    body: JSON.stringify({
+      model: target.model,
+      messages: messages.map((m) => ({ role: m.role, content: m.content })),
+    }),
   });
 
-  let lastModel = models[0] ?? "openai-fast";
-
-  async function completeWith(model: string, messages: ChatMessage[]): Promise<string> {
-    const chat = await client.chat.completions.create({
-      model,
-      messages: messages.map((m) => ({ role: m.role, content: m.content })),
-    });
-    const content = chat.choices[0]?.message?.content;
-    const text = typeof content === "string" ? content.trim() : "";
-    if (!text) {
-      throw new Error(`${model} returned empty completion`);
-    }
-    return normalizeDashes(text);
+  const raw = await res.text();
+  if (!res.ok) {
+    const err = new Error(`${target.label} HTTP ${res.status}: ${raw.slice(0, 180)}`);
+    (err as { status?: number }).status = res.status;
+    throw err;
   }
+
+  let content = "";
+  try {
+    const json = JSON.parse(raw) as {
+      choices?: Array<{ message?: { content?: string | null } }>;
+      error?: { message?: string } | string;
+      message?: string;
+    };
+    if (json.error) {
+      const msg =
+        typeof json.error === "string"
+          ? json.error
+          : (json.error.message ?? JSON.stringify(json.error));
+      throw new Error(`${target.label}: ${msg}`);
+    }
+    if (json.message && !json.choices) {
+      throw new Error(`${target.label}: ${json.message}`);
+    }
+    content = json.choices?.[0]?.message?.content?.trim() ?? "";
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      content = raw.trim();
+    } else {
+      throw error;
+    }
+  }
+
+  if (!content) {
+    throw new Error(`${target.label} returned empty completion`);
+  }
+  if (looksLikeProviderError(content)) {
+    throw new Error(`${target.label} provider error in body: ${content.slice(0, 160)}`);
+  }
+  return normalizeDashes(content);
+}
+
+/**
+ * Keyless LLM client with multi-provider failover (no API keys).
+ */
+export function createLlmClient(config: LlmProviderConfig = {}): LlmClient {
+  const targets = config.targets ?? DEFAULT_TARGETS;
+  let lastModel = targets[0]?.label ?? "none";
 
   return {
     get model() {
@@ -58,27 +133,27 @@ export function createLlmClient(config: LlmProviderConfig = {}): LlmClient {
     async complete(messages: ChatMessage[]): Promise<string> {
       const errors: string[] = [];
 
-      for (const model of models) {
+      for (const target of targets) {
         try {
-          const text = await completeWith(model, messages);
-          lastModel = model;
-          if (model !== models[0]) {
-            console.warn(`LLM fallback succeeded with ${model}`);
+          const text = await completeWith(target, messages);
+          lastModel = target.label;
+          if (target !== targets[0]) {
+            console.warn(`LLM fallback succeeded with ${target.label}`);
           }
           return text;
         } catch (error) {
           const detail =
             error instanceof Error ? error.message : String(error);
-          errors.push(`${model}: ${detail}`);
-          console.warn(`LLM failed (${model}):`, detail);
+          errors.push(`${target.label}: ${detail}`);
+          console.warn(`LLM failed (${target.label}):`, detail);
           if (isRateLimitError(error)) {
-            await sleep(400);
+            await sleep(800);
           }
         }
       }
 
       throw new Error(
-        `All Pollinations models failed. Tried: ${models.join(", ")}. ${errors.join(" | ")}`,
+        `All keyless LLM providers failed. Tried: ${targets.map((t) => t.label).join(", ")}.`,
       );
     },
   };
