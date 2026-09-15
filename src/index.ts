@@ -38,11 +38,19 @@ async function main(): Promise<void> {
       ...(env.CLOUDFLARE_AI_GATEWAY_URL
         ? { gatewayUrl: env.CLOUDFLARE_AI_GATEWAY_URL }
         : {}),
+      ...(env.GEMINI_API_KEY ? { geminiApiKey: env.GEMINI_API_KEY } : {}),
     });
-    console.log("image gen: Cloudflare Workers AI FLUX.1-schnell");
+    console.log(
+      env.GEMINI_API_KEY
+        ? "image gen: Cloudflare FLUX.1-schnell + Gemini fallback"
+        : "image gen: Cloudflare Workers AI FLUX.1-schnell",
+    );
+  } else if (env.GEMINI_API_KEY) {
+    setCloudflareImageConfig({ geminiApiKey: env.GEMINI_API_KEY });
+    console.log("image gen: Gemini only (no Cloudflare)");
   } else {
     console.warn(
-      "CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN missing — image gen disabled",
+      "CLOUDFLARE_* / GEMINI_API_KEY missing — image gen disabled",
     );
   }
 

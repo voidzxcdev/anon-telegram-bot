@@ -39,7 +39,6 @@ export default {
 
       const result = await env.AI.run(MODEL, {
         prompt,
-        num_steps: Math.min(Math.max(Number(body.num_steps) || 4, 1), 8),
       });
 
       return Response.json({ success: true, result });
