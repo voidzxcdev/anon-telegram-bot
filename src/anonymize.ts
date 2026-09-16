@@ -1,11 +1,20 @@
 import type { Context } from "grammy";
 import type { Message, ReplyParameters } from "grammy/types";
 
-import { parseAnonCommand } from "./command.js";
+import {
+  anonCommandLabels,
+  parseAnonCommand,
+  type AnonCommandSuffix,
+} from "./command.js";
 import { captureStyleFromAnonMessage } from "./style/capture.js";
 import { handleGoshaMention, mentionsGosha } from "./style/gosha.js";
 import { runGoshaInBackground } from "./style/gosha-lock.js";
-import type { TwinLearners } from "./style/learners.js";
+import type { PersonaId, TwinLearners } from "./style/learners.js";
+
+export type AnonymizeOpts = {
+  commandSuffix?: AnonCommandSuffix;
+  personaId?: PersonaId;
+};
 
 function replyParameters(
   messageId: number | undefined,
@@ -139,14 +148,19 @@ export async function sendAnonymousCopy(
 export async function handleAnonymize(
   ctx: Context,
   twins?: TwinLearners,
+  opts: AnonymizeOpts = {},
 ): Promise<void> {
   const message = ctx.message;
   if (!message) {
     return;
   }
 
+  const suffix: AnonCommandSuffix = opts.commandSuffix ?? "";
+  const personaId: PersonaId = opts.personaId ?? "alpha";
+  const labels = anonCommandLabels(suffix);
+
   const raw = message.text ?? message.caption;
-  const parsed = parseAnonCommand(raw);
+  const parsed = parseAnonCommand(raw, suffix);
   if (!parsed) {
     return;
   }
@@ -165,10 +179,10 @@ export async function handleAnonymize(
   if (!parsed.payload && !hasMedia) {
     await ctx.reply(
       "Usage:\n" +
-        "- /m your text\n" +
-        "- /с ваш текст\n" +
-        "- Attach a photo/file and put /m or /с in the caption\n" +
-        "- Reply to a message, then /m or /с to answer anonymously",
+        `- ${labels.en} your text\n` +
+        `- ${labels.ru} ваш текст\n` +
+        `- Attach a photo/file and put ${labels.en} or ${labels.ru} in the caption\n` +
+        `- Reply to a message, then ${labels.en} or ${labels.ru} to answer anonymously`,
     );
     return;
   }
@@ -194,11 +208,10 @@ export async function handleAnonymize(
     console.warn("could not delete original message", error);
   }
 
-  // /m or /с containing Гоша -> one AI reply (background; no webhook spam)
-  // Use payload/caption text only (never the image bytes).
+  // Anon send containing Гоша -> one AI reply (background; no webhook spam).
+  // This bot only speaks as its bound persona.
   if (twins && (mentionsGosha(parsed.payload) || mentionsGosha(raw))) {
-    const speaker =
-      message.message_id % 2 === 0 ? twins.alpha : twins.beta;
+    const speaker = personaId === "alpha" ? twins.alpha : twins.beta;
     const text = (parsed.payload || raw || "").trim();
     if (text) {
       runGoshaInBackground(message.chat.id, message.message_id, async () => {

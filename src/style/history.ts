@@ -16,9 +16,10 @@ export type ChatTurn = {
   messageId: number;
 };
 
-const MAX_TURNS = 40;
-/** Messages passed into the LLM (oldest → newest). */
-export const CONTEXT_LIMIT = 25;
+/** Keep a little headroom above the LLM window. */
+const MAX_TURNS = 80;
+/** Messages passed into the LLM (oldest → newest). Prefer 50 for chatter + mentions. */
+export const CONTEXT_LIMIT = 50;
 
 const byChat = new Map<number, ChatTurn[]>();
 
@@ -111,6 +112,25 @@ export function formatContextForPrompt(turns: ChatTurn[]): string {
       return `${who}: ${t.text}`;
     })
     .join("\n");
+}
+
+/**
+ * Chat ids that had any human traffic recently (for proactive chatter).
+ * Defaults to activity within the last 6 hours.
+ */
+export function listActiveChatIds(
+  maxAgeMs = 6 * 60 * 60 * 1000,
+): number[] {
+  const cutoff = Date.now() - maxAgeMs;
+  const ids: number[] = [];
+  for (const [chatId, turns] of byChat) {
+    // Telegram groups/supergroups/channels use negative ids; skip private DMs.
+    if (chatId >= 0) continue;
+    if (turns.some((t) => t.role === "user" && t.at >= cutoff)) {
+      ids.push(chatId);
+    }
+  }
+  return ids;
 }
 
 /** Test helper — clear buffers. */
