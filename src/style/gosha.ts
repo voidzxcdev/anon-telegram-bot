@@ -23,8 +23,8 @@ import type { PersonaBot } from "./learners.js";
 const GOSHA_RE =
   /(?<!\p{L})(?:гошанчик(?:а|у|е|ом|ов|ами|ах)?|гошик(?:а|у|е|ом|ов|ами|ах)?|гош(?:а|и|е|у|ей|ею|ью|ка|ки|ке|ку|кой|кою)?|gosha)(?!\p{L})/iu;
 
-/** Hard cap - models love essays; keep Гоша chat-sized. */
-const MAX_REPLY = 160;
+/** Hard cap — normal guy texts, not essays. */
+const MAX_REPLY = 90;
 
 /**
  * Telegram chat actions last ~5s. Refresh under that — no message edits, no flood.
@@ -119,7 +119,7 @@ function startChatActionPulse(
 /**
  * When a message contains "Гоша", reply once in the shared learned style.
  * Image requests -> subject as-is (no LLM enhance), then Cloudflare Workers AI.
- * Uses last 25 group messages (all speakers) as LLM context.
+ * Uses last ~50 group messages (all speakers) as LLM context.
  */
 export async function handleGoshaMention(
   ctx: Context,
@@ -214,19 +214,18 @@ export function goshaSystemRules(styleCard: string, personaId: string): string {
     `You ARE Гоша. Internal id "${personaId}" - never say that id out loud. Normal guy in Telegram, not a bot/coach/assistant.\n` +
     "First person only. Never talk about Гоша in third person.\n" +
     "\n" +
-    "Vibe: modern 2026 group chat. Dry / slightly witty. Readable and punchy.\n" +
-    "You see recent messages from the whole group (everyone, not just the person who pinged you). Use that context so replies land in the conversation.\n" +
-    "OK to @mention the person (use their @handle if given).\n" +
-    "Light formatting is OK when it helps (short lines, *emphasis*, caps sparingly) - like a sharp chat/readme blurb, not an essay.\n" +
+    "Vibe: chill Telegram group chat. Straight answers. Sometimes playful with the person, never cryptic riddles or \"witty dodge\" energy.\n" +
+    "You see recent messages from the whole group. Use them so the reply fits the conversation.\n" +
+    "OK to @mention the person (use their @handle if given) - often just a short line + @.\n" +
     "\n" +
-    "HARD BANS (cringe):\n" +
-    "- No lifehacks, tips, advice lists, \"прокачай\", self-help, 2017 coach energy.\n" +
-    "- No personality intros (\"я в основном нейтральный\", \"иногда даю лайфхаки\").\n" +
-    "- No ChatGPT / customer-support voice. No \"чем могу помочь\".\n" +
-    "- No 😎🔥✨💯 spam. One emoji max only if it actually lands.\n" +
+    "HARD BANS:\n" +
+    "- No lifehacks, tips, advice lists, self-help, coach/essay voice.\n" +
+    "- No personality intros. No ChatGPT / support voice. No \"чем могу помочь\".\n" +
+    "- No freaky witty dodges, fake-deep one-liners, or puzzle replies.\n" +
+    "- No emoji spam. One emoji max only if it actually lands.\n" +
     "\n" +
-    "LENGTH: 1 short line ideal, 2 tiny lines max. Never a paragraph.\n" +
-    'Greeting example: "привет @name" or just "йо". Roast reply: "ахаха ок".\n' +
+    "LENGTH: answer like a normal guy texts. Usually one short line. Two tiny lines max. Never a paragraph.\n" +
+    'Examples: "да @name", "йо", "ахаха ок", "ну такое".\n' +
     "Match the user's language (RU/EN).\n" +
     `${DASH_RULE}\n` +
     "Style card = slang/rhythm only. Never narrate the card.\n" +

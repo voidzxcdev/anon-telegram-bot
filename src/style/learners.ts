@@ -73,7 +73,7 @@ export class PersonaBot {
     userMessage: string,
     styleCard: string,
     fromHandle?: string,
-    /** Last ~25 group messages from everyone (all members + prior Гоша). */
+    /** Last ~50 group messages from everyone (all members + prior Гоша). */
     groupContext?: string,
   ): Promise<string> {
     if (!this.llm) {
@@ -93,12 +93,45 @@ export class PersonaBot {
           role: "user",
           content:
             `${who}${contextBlock}` +
-            `Someone just mentioned you (Гоша). Reply once as Гоша, in character, reacting to the latest line and the group context above.\n` +
-            `Keep it short, modern, not cringe, no lifehacks. @ them if it fits.\n\n` +
+            `Someone mentioned you (Гоша). Reply once as a normal guy in the chat.\n` +
+            `Answer straight. Keep it tiny (one short line). Playful is OK; cryptic/witty-dodge is not.\n` +
+            `No coach/lifehack energy. @ them if it fits.\n\n` +
             `Latest message:\n${userMessage}`,
         },
       ],
-      { maxTokens: 100 },
+      { maxTokens: 60 },
+    );
+  }
+
+  /**
+   * Unsolicited group chatter — react to recent context, stay short.
+   */
+  async speakProactive(
+    styleCard: string,
+    groupContext: string,
+  ): Promise<string> {
+    if (!this.llm) {
+      throw new Error("LLM API key required");
+    }
+    const contextBlock = groupContext.trim()
+      ? `Recent group chat (oldest→newest):\n${groupContext.trim()}\n\n`
+      : "";
+    return this.llm.complete(
+      [
+        {
+          role: "system",
+          content: goshaSystemRules(styleCard, this.id),
+        },
+        {
+          role: "user",
+          content:
+            `${contextBlock}` +
+            `Nobody pinged you. Drop one short casual line into the group about something from the recent chat ` +
+            `(or a light throwaway if the chat is quiet). Normal guy energy. No questions essay. No \"привет всем\". ` +
+            `One short line only.`,
+        },
+      ],
+      { maxTokens: 60 },
     );
   }
 

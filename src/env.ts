@@ -1,7 +1,13 @@
 import { z } from "zod";
 
 const envSchema = z.object({
+  /** First persona bot (alpha) — commands `/m` and `/с`. */
   TELEGRAM_BOT_TOKEN: z.string().min(1, "TELEGRAM_BOT_TOKEN is required"),
+  /**
+   * Second persona bot (beta / goscha2) — commands `/m2` and `/с2`.
+   * Optional: if unset, only the first bot runs.
+   */
+  TELEGRAM_BOT_TOKEN_2: z.string().min(1).optional(),
   PORT: z.coerce.number().int().positive().default(3000),
   /** Public base URL (Render sets RENDER_EXTERNAL_URL automatically). */
   WEBHOOK_URL: z.string().url().optional(),

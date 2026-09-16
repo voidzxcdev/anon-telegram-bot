@@ -16,6 +16,9 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$BotToken,
 
+  [Parameter(Mandatory = $false)]
+  [string]$BotToken2 = "",
+
   [Parameter(Mandatory = $true)]
   [string]$DockerHubUser,
 
