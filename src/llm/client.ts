@@ -14,6 +14,8 @@ type ChatTarget = {
   /** Extra JSON body fields (OpenRouter provider prefs, etc.). */
   extraBody?: Record<string, unknown>;
   headers?: Record<string, string>;
+  /** Soft per-attempt timeout; slow free models must not block replies. */
+  timeoutMs: number;
 };
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
@@ -21,20 +23,23 @@ const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GEMINI_URL =
   "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
 
+/** OpenRouter free models — last resort only (often cold / rate-limited). */
 const OPENROUTER_FREE_MODELS = [
-  "poolside/laguna-s-2.1:free",
+  "liquid/lfm-2.5-2.6b:free",
   "poolside/laguna-xs-2.1:free",
   "nex-agi/nex-n2.5-mini:free",
-  "liquid/lfm-2.5-2.6b:free",
+  "poolside/laguna-s-2.1:free",
 ] as const;
 
-/** Groq free-tier GPT-OSS (fast). */
-const GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"] as const;
+/** Groq free-tier GPT-OSS (fast) — prefer smaller/faster first. */
+const GROQ_MODELS = ["openai/gpt-oss-20b", "openai/gpt-oss-120b"] as const;
 
-/** Gemini free AI Studio models. */
-const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"] as const;
+/** Gemini free AI Studio models — Flash is typically snappy. */
+const GEMINI_MODELS = ["gemini-2.0-flash", "gemini-2.5-flash"] as const;
 
 const BAD_TARGET_COOLDOWN_MS = 30 * 60 * 1000;
+const FAST_TIMEOUT_MS = 12_000;
+const SLOW_TIMEOUT_MS = 18_000;
 
 export type LlmProviderConfig = {
   openRouterKeys?: string[];
@@ -74,7 +79,31 @@ function buildTargets(config: LlmProviderConfig): ChatTarget[] {
     config.siteUrl ?? "https://github.com/voidzxcdev/anon-telegram-bot";
   const app = config.appName ?? "anon-telegram-bot";
 
-  // Order: OpenRouter → Groq GPT-OSS → Gemini Flash
+  // Fast path first: Groq → Gemini → OpenRouter free (was the ~1min bottleneck).
+  if (config.groqApiKey) {
+    for (const model of GROQ_MODELS) {
+      targets.push({
+        label: `groq/${model}`,
+        url: GROQ_URL,
+        model,
+        apiKey: config.groqApiKey,
+        timeoutMs: FAST_TIMEOUT_MS,
+      });
+    }
+  }
+
+  if (config.geminiApiKey) {
+    for (const model of GEMINI_MODELS) {
+      targets.push({
+        label: `gemini/${model}`,
+        url: GEMINI_URL,
+        model,
+        apiKey: config.geminiApiKey,
+        timeoutMs: FAST_TIMEOUT_MS,
+      });
+    }
+  }
+
   const orKeys = (config.openRouterKeys ?? []).map((k) => k.trim()).filter(Boolean);
   const orModels = [
     ...(config.openRouterModel ? [config.openRouterModel] : []),
@@ -89,6 +118,7 @@ function buildTargets(config: LlmProviderConfig): ChatTarget[] {
         url: OPENROUTER_URL,
         model,
         apiKey,
+        timeoutMs: SLOW_TIMEOUT_MS,
         headers: {
           "HTTP-Referer": site,
           "X-Title": app,
@@ -99,28 +129,6 @@ function buildTargets(config: LlmProviderConfig): ChatTarget[] {
             allow_fallbacks: true,
           },
         },
-      });
-    }
-  }
-
-  if (config.groqApiKey) {
-    for (const model of GROQ_MODELS) {
-      targets.push({
-        label: `groq/${model}`,
-        url: GROQ_URL,
-        model,
-        apiKey: config.groqApiKey,
-      });
-    }
-  }
-
-  if (config.geminiApiKey) {
-    for (const model of GEMINI_MODELS) {
-      targets.push({
-        label: `gemini/${model}`,
-        url: GEMINI_URL,
-        model,
-        apiKey: config.geminiApiKey,
       });
     }
   }
@@ -145,8 +153,10 @@ async function completeOnce(
       model: target.model,
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
       max_tokens: maxTokens,
+      temperature: 0.7,
       ...target.extraBody,
     }),
+    signal: AbortSignal.timeout(target.timeoutMs),
   });
 
   const raw = await res.text();
@@ -186,7 +196,8 @@ async function completeOnce(
 }
 
 /**
- * Multi-provider free LLM: OpenRouter → Groq GPT-OSS → Gemini Flash.
+ * Multi-provider free LLM: Groq → Gemini Flash → OpenRouter (last resort).
+ * Sticks to the last successful target so we do not rotate onto slow models.
  */
 export function createLlmClient(config: LlmProviderConfig): LlmClient {
   const targets = buildTargets(config);
@@ -219,7 +230,8 @@ export function createLlmClient(config: LlmProviderConfig): LlmClient {
 
         try {
           const text = await completeOnce(target, messages, maxTokens);
-          cursor = (idx + 1) % targets.length;
+          // Stick to the working provider (was rotating away → slow OpenRouter).
+          cursor = idx;
           badUntil.delete(target.label);
           lastModel = target.label;
           if (i > 0) {
@@ -244,8 +256,17 @@ export function createLlmClient(config: LlmProviderConfig): LlmClient {
               }
             }
           }
+          // Timeouts / aborts: skip quickly to the next target.
+          const timedOut =
+            error instanceof Error &&
+            (error.name === "TimeoutError" ||
+              error.name === "AbortError" ||
+              /aborted|timeout/i.test(error.message));
           if (isRateLimitError(error)) {
-            await sleep(300);
+            badUntil.set(target.label, Date.now() + 60_000);
+            await sleep(150);
+          } else if (timedOut) {
+            badUntil.set(target.label, Date.now() + 120_000);
           }
         }
       }

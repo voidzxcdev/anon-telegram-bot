@@ -195,12 +195,15 @@ export async function handleAnonymize(
   }
 
   // /m or /с containing Гоша -> one AI reply (background; no webhook spam)
+  // Use payload/caption text only (never the image bytes).
   if (twins && (mentionsGosha(parsed.payload) || mentionsGosha(raw))) {
     const speaker =
       message.message_id % 2 === 0 ? twins.alpha : twins.beta;
-    const text = parsed.payload || raw || "";
-    runGoshaInBackground(message.chat.id, message.message_id, async () => {
-      await handleGoshaMention(ctx, speaker, text);
-    });
+    const text = (parsed.payload || raw || "").trim();
+    if (text) {
+      runGoshaInBackground(message.chat.id, message.message_id, async () => {
+        await handleGoshaMention(ctx, speaker, text);
+      });
+    }
   }
 }

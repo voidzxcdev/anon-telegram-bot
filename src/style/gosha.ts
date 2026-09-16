@@ -4,6 +4,11 @@ import { GrammyError, InputFile } from "grammy";
 import { DASH_RULE } from "../llm/types.js";
 import { sleep } from "../llm/types.js";
 import {
+  formatContextForPrompt,
+  getRecentContext,
+  recordGoshaTurn,
+} from "./history.js";
+import {
   generateCloudflareFluxImage,
   IMAGE_GEN_FAIL_MESSAGE,
   ImageGenError,
@@ -30,6 +35,20 @@ export function mentionsGosha(text: string | undefined): boolean {
   if (!text) return false;
   GOSHA_RE.lastIndex = 0;
   return GOSHA_RE.test(text);
+}
+
+/**
+ * Text content for Гоша / LLM: caption if present, else text.
+ * Photo-only (no caption) → undefined (caller should skip).
+ */
+export function extractMessageText(message: {
+  text?: string;
+  caption?: string;
+  photo?: unknown;
+}): string | undefined {
+  const text = (message.text ?? message.caption ?? "").trim();
+  if (!text) return undefined;
+  return text;
 }
 
 function truncate(text: string): string {
@@ -100,6 +119,7 @@ function startChatActionPulse(
 /**
  * When a message contains "Гоша", reply once in the shared learned style.
  * Image requests -> subject as-is (no LLM enhance), then Cloudflare Workers AI.
+ * Uses last 25 group messages (all speakers) as LLM context.
  */
 export async function handleGoshaMention(
   ctx: Context,
@@ -114,7 +134,7 @@ export async function handleGoshaMention(
   const label = isImage ? "Гоша генерирует фото" : "Гоша печатает";
   const chatAction = isImage ? ("upload_photo" as const) : ("typing" as const);
 
-  // One static status message — never animated via edits.
+  // Status line + chat action pulse ("Гоша печатает" / typing).
   const status = await ctx.reply(label);
   const chatId = status.chat.id;
   const messageId = status.message_id;
@@ -142,7 +162,7 @@ export async function handleGoshaMention(
       return;
     }
 
-    await speaker.loadSharedProfile();
+    // Profile is loaded at boot / train; skip disk I/O on the hot path.
     const profile = speaker.getProfile();
     const card =
       profile?.card ??
@@ -154,11 +174,21 @@ export async function handleGoshaMention(
         ? `@${from.username}`
         : (from?.first_name ?? "someone");
 
-    const answer = await speaker.speakAsGosha(sourceText, card, who);
-    stopPulse();
-    await withTelegramRetry("editReply", () =>
-      ctx.api.editMessageText(chatId, messageId, truncate(answer)),
+    const turns = getRecentContext(chatId);
+    const groupContext = formatContextForPrompt(turns);
+
+    const answer = await speaker.speakAsGosha(
+      sourceText,
+      card,
+      who,
+      groupContext,
     );
+    stopPulse();
+    const replyText = truncate(answer);
+    await withTelegramRetry("editReply", () =>
+      ctx.api.editMessageText(chatId, messageId, replyText),
+    );
+    recordGoshaTurn(chatId, messageId, replyText);
   } catch (error) {
     console.error("Гоша reply failed", error);
     stopPulse();
@@ -185,6 +215,7 @@ export function goshaSystemRules(styleCard: string, personaId: string): string {
     "First person only. Never talk about Гоша in third person.\n" +
     "\n" +
     "Vibe: modern 2026 group chat. Dry / slightly witty. Readable and punchy.\n" +
+    "You see recent messages from the whole group (everyone, not just the person who pinged you). Use that context so replies land in the conversation.\n" +
     "OK to @mention the person (use their @handle if given).\n" +
     "Light formatting is OK when it helps (short lines, *emphasis*, caps sparingly) - like a sharp chat/readme blurb, not an essay.\n" +
     "\n" +

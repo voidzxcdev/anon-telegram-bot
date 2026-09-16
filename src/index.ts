@@ -66,11 +66,11 @@ async function main(): Promise<void> {
   );
 
   const providers = [
-    openRouterKeys.length > 0 ? `openrouter(${openRouterKeys.length})` : null,
     env.GROQ_API_KEY ? "groq" : null,
     env.GEMINI_API_KEY ? "gemini" : null,
+    openRouterKeys.length > 0 ? `openrouter(${openRouterKeys.length})` : null,
   ].filter(Boolean);
-  console.log(`LLM ready: ${llm.model} [${providers.join(" → ")}]`);
+  console.log(`LLM ready: ${llm.model} [${providers.join(" → ")}] (fast: groq→gemini→openrouter)`);
   const runTrain = async (reason: string) => {
     try {
       const profile = await twins.alpha.learnFromSharedCorpus();
