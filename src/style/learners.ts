@@ -73,23 +73,33 @@ export class PersonaBot {
     userMessage: string,
     styleCard: string,
     fromHandle?: string,
+    /** Last ~25 group messages from everyone (all members + prior Гоша). */
+    groupContext?: string,
   ): Promise<string> {
     if (!this.llm) {
       throw new Error("LLM API key required");
     }
-    const who = fromHandle ? `Speaker: ${fromHandle}\n` : "";
-    return this.llm.complete([
-      {
-        role: "system",
-        content: goshaSystemRules(styleCard, this.id),
-      },
-      {
-        role: "user",
-        content:
-          `${who}They mentioned you (Гоша). Reply as Гоша: short, modern, not cringe, no lifehacks. @ them if it fits.\n\n` +
-          userMessage,
-      },
-    ]);
+    const who = fromHandle ? `Triggered by: ${fromHandle}\n` : "";
+    const contextBlock = groupContext?.trim()
+      ? `Recent group chat (last messages from everyone, oldest→newest):\n${groupContext.trim()}\n\n`
+      : "";
+    return this.llm.complete(
+      [
+        {
+          role: "system",
+          content: goshaSystemRules(styleCard, this.id),
+        },
+        {
+          role: "user",
+          content:
+            `${who}${contextBlock}` +
+            `Someone just mentioned you (Гоша). Reply once as Гоша, in character, reacting to the latest line and the group context above.\n` +
+            `Keep it short, modern, not cringe, no lifehacks. @ them if it fits.\n\n` +
+            `Latest message:\n${userMessage}`,
+        },
+      ],
+      { maxTokens: 100 },
+    );
   }
 
   /** Strip Гоша / draw verbs; use the subject verbatim (no LLM enhance). */
