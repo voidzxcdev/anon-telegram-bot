@@ -34,8 +34,8 @@ function speakerLabel(from: {
 
 /**
  * Record a human message into the group-wide window.
- * - Photo-only (no caption): skipped
- * - Photo + caption: caption text only (image ignored)
+ * - Text / caption: used as-is
+ * - Photos: pass `overrideText` from vision (`[photo: …]` + caption)
  * - Bot senders: skipped (Гоша replies go through recordGoshaTurn)
  */
 export function recordUserTurn(
@@ -47,11 +47,12 @@ export function recordUserTurn(
     photo?: unknown;
     from?: { username?: string; first_name?: string; is_bot?: boolean };
   },
+  /** When set (e.g. vision description), used instead of text/caption. */
+  overrideText?: string,
 ): void {
   if (message.from?.is_bot) return;
 
-  const text = (message.text ?? message.caption ?? "").trim();
-  // Photo-only or empty: nothing for the model to read.
+  const text = (overrideText ?? message.text ?? message.caption ?? "").trim();
   if (!text) return;
 
   pushTurn(chatId, {
@@ -81,8 +82,15 @@ export function recordGoshaTurn(
 
 function pushTurn(chatId: number, turn: ChatTurn): void {
   const list = byChat.get(chatId) ?? [];
-  // Dedupe webhook retries of the same message id + role.
-  if (list.some((t) => t.messageId === turn.messageId && t.role === turn.role)) {
+  const existing = list.find(
+    (t) => t.messageId === turn.messageId && t.role === turn.role,
+  );
+  if (existing) {
+    // Enrich photo placeholders when vision finishes (same message id).
+    if (turn.text.length > existing.text.length) {
+      existing.text = turn.text;
+      existing.at = turn.at;
+    }
     return;
   }
   list.push(turn);

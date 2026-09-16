@@ -15,6 +15,7 @@ import {
 } from "./style/chatter.js";
 import { setCloudflareImageConfig } from "./style/image-gen.js";
 import { createTwinLearners } from "./style/learners.js";
+import { setVisionConfig } from "./style/vision.js";
 
 const TRAIN_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
 
@@ -69,6 +70,17 @@ async function main(): Promise<void> {
     ...(env.GEMINI_API_KEY ? { geminiApiKey: env.GEMINI_API_KEY } : {}),
     ...(env.publicBaseUrl ? { siteUrl: env.publicBaseUrl } : {}),
   });
+
+  if (env.GEMINI_API_KEY) {
+    setVisionConfig({ geminiApiKey: env.GEMINI_API_KEY });
+    console.log(
+      "photo vision: Gemini Flash multimodal (group photos → [photo: …] context)",
+    );
+  } else {
+    console.warn(
+      "GEMINI_API_KEY missing — photo vision disabled (captions / [photo] only)",
+    );
+  }
 
   if (env.CLOUDFLARE_ACCOUNT_ID && env.CLOUDFLARE_API_TOKEN) {
     setCloudflareImageConfig({
