@@ -216,6 +216,7 @@ export function goshaSystemRules(styleCard: string, personaId: string): string {
     "\n" +
     "Vibe: chill Telegram group chat. Straight answers. Sometimes playful with the person, never cryptic riddles or \"witty dodge\" energy.\n" +
     "You see recent messages from the whole group. Use them so the reply fits the conversation.\n" +
+    "Photo lines look like [photo: …] — you can see what people posted; react briefly if relevant, don't narrate the whole image.\n" +
     "OK to @mention the person (use their @handle if given) - often just a short line + @.\n" +
     "\n" +
     "HARD BANS:\n" +

@@ -14,6 +14,10 @@ import {
 import { runGoshaInBackground } from "./style/gosha-lock.js";
 import { recordUserTurn } from "./style/history.js";
 import type { PersonaId, TwinLearners } from "./style/learners.js";
+import {
+  describeTelegramPhoto,
+  formatPhotoContextText,
+} from "./style/vision.js";
 
 export type BotDeps = {
   twins?: TwinLearners;
@@ -71,7 +75,7 @@ export function createBot(token: string, deps: BotDeps = {}): Bot {
         "- In groups, make me admin with Delete messages so I can remove yours\n" +
         "- Say Гоша / Гошу / гошик (any case) for one AI reply\n" +
         "- Гоша нарисуй … → FLUX image (Cloudflare Workers AI)\n" +
-        "- Photo-only messages are ignored by Гоша; captions are used as text\n\n" +
+        "- Group photos are described (free Gemini vision) so Гоша can see them in context\n\n" +
         "Style learning: every anon send feeds one shared corpus for both persona bots.",
     );
   });
@@ -80,13 +84,96 @@ export function createBot(token: string, deps: BotDeps = {}): Bot {
     await handleAnonymize(ctx, twins, { commandSuffix: suffix, personaId });
   });
 
-  // Record every text/caption we see into the group-wide window (all speakers).
-  // Photo-only never has caption → not recorded. Photo+caption → caption only.
-  bot.on(["message:text", "message:caption"], async (ctx, next) => {
+  // Text-only into the group window (photos go through the photo handler).
+  bot.on("message:text", async (ctx, next) => {
     const message = ctx.message;
-    if (message && ctx.from && !ctx.from.is_bot) {
+    if (message && ctx.from && !ctx.from.is_bot && !message.photo) {
       recordUserTurn(message.chat.id, message);
     }
+    await next();
+  });
+
+  /**
+   * Photos from anyone: download → free Gemini describe → history as [photo: …].
+   * Soft-fail keeps caption / "[photo]" so replies are never blocked on vision.
+   * Never await vision on the webhook hot path (Telegram retries slow handlers).
+   */
+  bot.on("message:photo", async (ctx, next) => {
+    const message = ctx.message;
+    if (!message?.photo?.length || !ctx.from || ctx.from.is_bot) {
+      await next();
+      return;
+    }
+
+    const caption = message.caption?.trim() ?? "";
+    const chatId = message.chat.id;
+    const photos = message.photo;
+
+    const wantsGoshaReply =
+      Boolean(twins) &&
+      Boolean(caption) &&
+      mentionsGosha(caption) &&
+      !isAnonCommandMessage(caption, suffix);
+
+    if (wantsGoshaReply && twins) {
+      if (twinMode.enabled) {
+        const intended: PersonaId =
+          message.message_id % 2 === 0 ? "alpha" : "beta";
+        if (personaId !== intended) {
+          // Still record history from the twin that owns this message? Skip —
+          // the intended twin will record when it handles the update.
+          await next();
+          return;
+        }
+      }
+      const speaker = personaId === "alpha" ? twins.alpha : twins.beta;
+      // Placeholder in history immediately; enrich after vision.
+      recordUserTurn(
+        chatId,
+        message,
+        formatPhotoContextText(caption, undefined),
+      );
+      runGoshaInBackground(chatId, message.message_id, async () => {
+        let description: string | undefined;
+        try {
+          description = await describeTelegramPhoto(ctx.api, photos);
+        } catch (error) {
+          console.warn(
+            "vision describe threw",
+            error instanceof Error ? error.message : error,
+          );
+        }
+        const contextText = formatPhotoContextText(caption, description);
+        recordUserTurn(chatId, message, contextText);
+        await handleGoshaMention(ctx, speaker, contextText);
+      });
+      return;
+    }
+
+    // History only — placeholder now, enrich with vision in background.
+    recordUserTurn(
+      chatId,
+      message,
+      formatPhotoContextText(caption, undefined),
+    );
+    void (async () => {
+      let description: string | undefined;
+      try {
+        description = await describeTelegramPhoto(ctx.api, photos);
+      } catch (error) {
+        console.warn(
+          "vision describe threw",
+          error instanceof Error ? error.message : error,
+        );
+      }
+      if (!description) return;
+      recordUserTurn(
+        chatId,
+        message,
+        formatPhotoContextText(caption, description),
+      );
+    })();
+
     await next();
   });
 
@@ -97,8 +184,13 @@ export function createBot(token: string, deps: BotDeps = {}): Bot {
       return;
     }
 
+    // Photo+Гоша already handled above; avoid double reply on caption filter.
+    if (message.photo?.length) {
+      await next();
+      return;
+    }
+
     const raw = message.text ?? message.caption;
-    // Caption-only for photos; skip photo-only (no text for Гоша).
     const text = extractMessageText(message);
     if (!text) {
       await next();
