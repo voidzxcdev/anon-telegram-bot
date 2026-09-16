@@ -1,35 +1,25 @@
 /**
- * Prevents Гоша reply spam from Telegram webhook retries
- * while a long LLM call is still running.
+ * Dedupes Telegram webhook retries for the same messageId
+ * so a long LLM call is not started twice for one update.
+ * Does not block other messages in the same chat.
  */
 
-const inflightChats = new Set<number>();
 const inflightMessages = new Set<string>();
-const lastReplyAt = new Map<number, number>();
-
-const COOLDOWN_MS = 10_000;
 
 export function tryAcquireGoshaLock(
   chatId: number,
   messageId: number,
 ): boolean {
   const msgKey = `${chatId}:${messageId}`;
-  if (inflightMessages.has(msgKey) || inflightChats.has(chatId)) {
-    return false;
-  }
-  const last = lastReplyAt.get(chatId) ?? 0;
-  if (Date.now() - last < COOLDOWN_MS) {
+  if (inflightMessages.has(msgKey)) {
     return false;
   }
   inflightMessages.add(msgKey);
-  inflightChats.add(chatId);
   return true;
 }
 
 export function releaseGoshaLock(chatId: number, messageId: number): void {
   inflightMessages.delete(`${chatId}:${messageId}`);
-  inflightChats.delete(chatId);
-  lastReplyAt.set(chatId, Date.now());
 }
 
 /** Fire-and-forget wrapper so webhook can ACK before LLM finishes. */
@@ -39,7 +29,9 @@ export function runGoshaInBackground(
   work: () => Promise<void>,
 ): void {
   if (!tryAcquireGoshaLock(chatId, messageId)) {
-    console.warn(`Гоша skipped (lock/cooldown) chat=${chatId} msg=${messageId}`);
+    console.warn(
+      `Гоша skipped (duplicate messageId) chat=${chatId} msg=${messageId}`,
+    );
     return;
   }
   void work().finally(() => {
